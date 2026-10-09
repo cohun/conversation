@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>English Teacher & Conversational Companion</title>
+  <meta name="description" content="Voice-first English learning and companion phone calls powered by Gemini Multimodal Live API.">
+  <meta name="theme-color" content="#fcf9f5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Antigravity Live</h1>
+          <p class="brand-sub">English Companion</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="profileBtn" class="icon-btn" title="Your Profile & Name Pronunciation" aria-label="Profile">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </button>
+        <button id="settingsBtn" class="icon-btn" title="App & Gemini Settings" aria-label="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- User Pronunciation Handshake Banner -->
+    <div class="user-handshake-banner">
+      <div class="user-handshake-info">
+        <div id="userAvatarBadge" class="user-avatar-badge">A</div>
+        <div>
+          <div id="userDisplayName" class="user-name-title">Hello, Alex 👋</div>
+          <div id="userPhoneticHint" class="user-pronounce-hint">Pronounced: AH-leks</div>
+        </div>
+      </div>
+      <button id="handshakeEditBtn" class="handshake-edit-btn">Edit</button>
+    </div>
+
+    <!-- Tab Navigation -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-tab="personas">
+        <span>👩‍🏫 Companions</span>
+        <span id="personasCountBadge" class="tab-badge">3</span>
+      </button>
+      <button class="tab-btn" data-tab="topics">
+        <span>📚 Saved Topics</span>
+        <span id="topicsCountBadge" class="tab-badge">0</span>
+      </button>
+    </nav>
+
+    <!-- Tab 1: Personas -->
+    <main id="tabPersonas" class="tab-pane active">
+      <div class="section-top-row">
+        <h2 class="section-heading">Choose a Companion</h2>
+        <button id="newPersonaBtn" class="add-persona-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New Persona
+        </button>
+      </div>
+      <div id="personasList" class="persona-list">
+        <!-- Rendered dynamically via app.js -->
+      </div>
+    </main>
+
+    <!-- Tab 2: Saved Topics -->
+    <section id="tabTopics" class="tab-pane">
+      <div class="section-top-row">
+        <h2 class="section-heading">Resumable Topics</h2>
+      </div>
+      <div id="topicsList">
+        <!-- Rendered dynamically via app.js -->
+      </div>
+    </section>
+
+    <!-- ==========================================
+         Active Fullscreen Phone Call Interface
+         ========================================== -->
+    <div id="callOverlay" class="call-overlay" data-call-state="connecting">
+      <!-- Call Top Caller Info -->
+      <div class="call-top-info">
+        <div id="callerAvatar" class="caller-avatar-ring">👩‍🏫</div>
+        <h2 id="callerName" class="caller-name">Sarah</h2>
+        <div id="callerBadge" class="caller-sub-badge">3-Phase Teacher Mode</div>
+        <div class="call-timer-status">
+          <span class="call-status-dot"></span>
+          <span id="callStatusText">Connecting...</span>
+          <span id="callTimer" style="display:none;">• 00:00</span>
+        </div>
+      </div>
+
+      <!-- Center Voice Visualizer -->
+      <div class="voice-visualizer-container">
+        <!-- Floating Toast -->
+        <div id="callToast" class="call-toast">Bookmark saved! 🔖</div>
+
+        <!-- Concentric Pulsing Rings & Orb -->
+        <div class="pulse-rings-wrapper">
+          <div class="pulse-ring ring-3"></div>
+          <div class="pulse-ring ring-2"></div>
+          <div class="pulse-ring ring-1"></div>
+          <div id="pulseCoreOrb" class="pulse-core-orb">
+            <svg id="pulseOrbIcon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            </svg>
+          </div>
+        </div>
+
+        <div id="callStateLabel" class="call-state-label">Connecting audio stream...</div>
+        <div id="callBargeInTip" class="call-bargein-tip">Speak anytime to interrupt, or tap "Pass Turn"</div>
+      </div>
+
+      <!-- Bottom Phone Call Controls -->
+      <div class="call-bottom-controls">
+        <div class="call-action-row">
+          <!-- Mute Button -->
+          <button id="muteBtn" class="call-control-btn" title="Toggle Mute">
+            <div class="call-control-circle">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              </svg>
+            </div>
+            <span id="muteLabel" class="call-control-label">Mute</span>
+          </button>
+
+          <!-- Pass Turn ("Átadom a szót") -->
+          <button id="passTurnBtn" class="call-control-btn primary-pass" title="Pass Turn to Partner">
+            <div class="call-control-circle">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </div>
+            <span class="call-control-label">Your Turn</span>
+          </button>
+
+          <!-- Bookmark / Save Topic ("Téma mentése") -->
+          <button id="bookmarkBtn" class="call-control-btn" title="Save / Bookmark Topic">
+            <div class="call-control-circle">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path>
+              </svg>
+            </div>
+            <span class="call-control-label">Bookmark</span>
+          </button>
+        </div>
+
+        <!-- Big Red End Call Button -->
+        <button id="endCallBtn" class="end-call-btn" title="End Call">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(135deg);">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         Modal 1: Name & Pronunciation Handshake
+         ========================================== -->
+    <div id="profileModal" class="modal-backdrop">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3 class="modal-title">Name & Pronunciation Handshake</h3>
+          <button class="modal-close-btn" data-close="profileModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="profileNameInput">Your Name / Nickname</label>
+            <input type="text" id="profileNameInput" class="form-input" placeholder="e.g. Alex, Sándor, Eszter">
+            <span class="form-hint">How the teacher will address you during spoken calls.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="profilePhoneticInput">Pronunciation & Stress Notes</label>
+            <input type="text" id="profilePhoneticInput" class="form-input" placeholder="e.g. Alex (pronounced AH-leks, stress on first syllable)">
+            <span class="form-hint">Provide phonetic cues so the teacher pronounces your name with authentic stress.</span>
+          </div>
+
+          <div class="handshake-mic-box">
+            <div>
+              <div style="font-weight: 600; font-size: 0.88rem; color: var(--sage-600); margin-bottom: 2px;">Pronounce into Mic</div>
+              <div id="micStatusText" class="handshake-mic-text">Speak your name aloud to test your microphone level.</div>
+            </div>
+            <button id="micTestBtn" class="mic-test-btn" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path></svg>
+              <span>Test Mic</span>
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" data-close="profileModal">Cancel</button>
+          <button id="saveProfileBtn" class="btn-primary">Save Profile</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         Modal 2: New Persona Creator
+         ========================================== -->
+    <div id="personaModal" class="modal-backdrop">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3 class="modal-title">Create New Companion</h3>
+          <button class="modal-close-btn" data-close="personaModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="newPersonaName">Companion Name</label>
+            <input type="text" id="newPersonaName" class="form-input" placeholder="e.g. Oliver, Emma, Daniel">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="newPersonaDesc">Short Description</label>
+            <input type="text" id="newPersonaDesc" class="form-input" placeholder="e.g. IELTS exam preparation coach">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="newPersonaMode">Interaction Mode</label>
+            <select id="newPersonaMode" class="form-select">
+              <option value="teacher">Pedagogical Mode (3-Phase Error Correction & Practice)</option>
+              <option value="free_chat">Free Chat Mode (Equal conversational friend)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="newPersonaVoice">Live Voice</label>
+            <select id="newPersonaVoice" class="form-select">
+              <option value="Aoede">Aoede (Warm, melodic female)</option>
+              <option value="Kore">Kore (Polished, professional female)</option>
+              <option value="Puck">Puck (Witty, energetic male)</option>
+              <option value="Charon">Charon (Calm, deep male)</option>
+              <option value="Fenrir">Fenrir (Dynamic, confident male)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="newPersonaPrompt">System Prompt</label>
+            <textarea id="newPersonaPrompt" class="form-textarea" placeholder="Instructions for how the companion should talk and behave..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" data-close="personaModal">Cancel</button>
+          <button id="savePersonaBtn" class="btn-primary">Create Companion</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         Modal 3: App & Gemini Settings
+         ========================================== -->
+    <div id="settingsModal" class="modal-backdrop">
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3 class="modal-title">Settings & Model Engine</h3>
+          <button class="modal-close-btn" data-close="settingsModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="settingsApiKey">Gemini API Key</label>
+            <input type="password" id="settingsApiKey" class="form-input" placeholder="AIzaSy...">
+            <span id="apiKeyStatusHint" class="form-hint">Configured via GEMINI_API_KEY environment variable or stored locally.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="settingsModelSelect">Gemini Live Model Resolution</label>
+            <select id="settingsModelSelect" class="form-select">
+              <option value="auto">Auto (Dynamically discover newest bidiGenerateContent model)</option>
+              <option value="models/gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
+              <option value="models/gemini-2.0-flash">gemini-2.0-flash</option>
+              <option value="models/gemini-2.0-flash-realtime-exp">gemini-2.0-flash-realtime-exp</option>
+              <option value="models/gemini-2.5-flash">gemini-2.5-flash</option>
+            </select>
+            <span class="form-hint">Server dynamically queries available models with bidiGenerateContent capability and manages fallback failover.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Active Resolved Model</label>
+            <div id="activeModelBadge" style="font-family: monospace; font-size: 0.85rem; padding: 8px 12px; background: var(--bg-surface-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); color: var(--sage-600);">
+              models/gemini-2.0-flash-exp
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" data-close="settingsModal">Cancel</button>
+          <button id="saveSettingsBtn" class="btn-primary">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/js/audio-call.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

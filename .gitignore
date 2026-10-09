@@ -1,0 +1,33 @@
+# Binaries & Executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+
+# Environment variables & Sensitive keys
+.env
+.env.*
+*.env
+*.key
+*.pem
+*credentials*.json
+service-account*.json
+
+# Data and SQLite Local Storage
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Logs & Temporary files
+*.log
+tmp/
+temp/
+
+# IDE and OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

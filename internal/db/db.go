@@ -1,0 +1,470 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	_ "modernc.org/sqlite"
+)
+
+type DB struct {
+	conn *sql.DB
+	mu   sync.RWMutex
+}
+
+type UserProfile struct {
+	ID           int64  `json:"id"`
+	UserID       string `json:"user_id"`
+	DisplayName  string `json:"display_name"`
+	PhoneticNote string `json:"phonetic_note"`
+	CreatedAt    string `json:"created_at"`
+}
+
+type Persona struct {
+	ID           string `json:"id"`
+	UserID       string `json:"user_id"`
+	Name         string `json:"name"`
+	ShortDesc    string `json:"short_desc"`
+	SystemPrompt string `json:"system_prompt"`
+	VoiceName    string `json:"voice_name"`
+	Mode         string `json:"mode"`
+	IsDefault    bool   `json:"is_default"`
+	AvatarIcon   string `json:"avatar_icon"`
+	CreatedAt    string `json:"created_at"`
+}
+
+type SavedConversation struct {
+	ID             string  `json:"id"`
+	UserID         string  `json:"user_id"`
+	PersonaID      string  `json:"persona_id"`
+	PersonaName    string  `json:"persona_name,omitempty"`
+	TopicTitle     string  `json:"topic_title"`
+	Summary        string  `json:"summary"`
+	KeyPoints      string  `json:"key_points"`
+	OpenQuestion   string  `json:"open_question"`
+	CreatedAt      string  `json:"created_at"`
+	LastResumedAt  *string `json:"last_resumed_at"`
+}
+
+func InitDB(dbPath string) (*DB, error) {
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create db directory %s: %w", dir, err)
+	}
+
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
+	}
+
+	database := &DB{conn: conn}
+	if err := database.migrate(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	if err := database.seed(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to seed database: %w", err)
+	}
+
+	return database, nil
+}
+
+func (d *DB) Close() error {
+	return d.conn.Close()
+}
+
+func (d *DB) migrate() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS user_profile (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL DEFAULT 'default_user',
+		display_name TEXT NOT NULL,
+		phonetic_note TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS personas (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL DEFAULT 'default_user',
+		name TEXT NOT NULL,
+		short_desc TEXT NOT NULL,
+		system_prompt TEXT NOT NULL,
+		voice_name TEXT NOT NULL,
+		mode TEXT NOT NULL CHECK(mode IN ('teacher', 'free_chat')),
+		is_default BOOLEAN DEFAULT 0,
+		avatar_icon TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS saved_conversations (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL DEFAULT 'default_user',
+		persona_id TEXT NOT NULL,
+		topic_title TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		key_points TEXT,
+		open_question TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_resumed_at DATETIME,
+		FOREIGN KEY(persona_id) REFERENCES personas(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS app_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_personas_user_id ON personas(user_id);
+	CREATE INDEX IF NOT EXISTS idx_saved_conv_user_id ON saved_conversations(user_id);
+	`
+	_, err := d.conn.Exec(schema)
+	return err
+}
+
+func (d *DB) seed() error {
+	// Seed app_settings if not present
+	_, err := d.conn.Exec(`
+		INSERT OR IGNORE INTO app_settings (key, value) VALUES ('default_live_model', 'auto');
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Seed user_profile if empty
+	var count int
+	err = d.conn.QueryRow(`SELECT COUNT(*) FROM user_profile`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = d.conn.Exec(`
+			INSERT INTO user_profile (user_id, display_name, phonetic_note) 
+			VALUES ('default_user', 'Alex', 'Alex (pronounced AH-leks, stress on first syllable)');
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Seed default personas if empty
+	err = d.conn.QueryRow(`SELECT COUNT(*) FROM personas`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		sarahPrompt := `You are Sarah, a warm, patient, and exceptionally encouraging English teacher having an interactive phone call with your student. You communicate strictly via natural spoken audio.
+
+Your mission is to help the student build confidence, fluency, and idiomatic mastery in spoken English through relaxed, natural conversation.
+
+Whenever the student speaks, you MUST adhere to this pedagogical 3-phase cycle in your response turn:
+
+Phase 1 - Error Correction & Natural Repetition:
+Gently and briefly point out any grammatical, lexical, prepositional, or pronunciation inaccuracies in what the student said.
+Then, repeat the student's idea or sentence using clean, perfect, and natural English. If the student made no errors, praise their phrasing briefly.
+
+Phase 2 - Explanation & Practice Drill Offer:
+Provide a quick, intuitive 1-sentence explanation of why the correction is needed.
+Briefly offer a quick drill or practice opportunity (e.g., "Would you like to try saying that sentence again?" or "Try saying it after me: ...").
+If the student chooses to practice the drill, celebrate their effort and give feedback. If the student continues the discussion or says they want to move on, immediately advance to Phase 3.
+
+Phase 3 - Conversational Engagement & Open Dialogue:
+Respond thoughtfully and engagingly to the substance of the student's thought or story. Share your own perspective or experience, and close your turn with an engaging open-ended question that naturally prompts the student to speak next.
+
+Guidelines for Spoken Phone Call Experience:
+- Keep each spoken turn conversational and concise (typically 2-4 sentences total across all 3 phases). Avoid long speeches.
+- Speak in a warm, patient, friendly tone at a natural, comfortable pace.
+- Do not mention formatting, asterisks, bullet points, or visual cues, as this is a voice-only phone call.
+- Always address the student respectfully by their name and pronunciation notes as provided in context.
+
+Conversation Bookmarking:
+You have access to the 'save_conversation' tool. Whenever the student says "let's save this topic", "bookmark this", "save our conversation", or indicates they want to save the topic for later, invoke the 'save_conversation' tool with topic_title, summary, key_points, and open_question.
+After invoking the tool, verbally confirm: "I've saved our conversation about [topic_title]. We can pick it up anytime!"`
+
+		leoPrompt := `You are Leo, a friendly, witty, and easygoing conversation partner on a phone call with the user.
+Your role is Free Chat: you are an equal conversation buddy, NOT an instructor or teacher.
+Do NOT correct grammar or give language lessons unless explicitly asked.
+Speak casually, naturally, and warmly. Use contemporary idioms, share thoughts on daily life, hobbies, travel, movies, tech, and cultural experiences.
+Keep your responses conversational and bite-sized (1-3 sentences), like a real telephone call with a close friend.
+End your turns with natural questions or banter.
+If the user asks to save or bookmark the topic, call the 'save_conversation' tool and confirm verbally.`
+
+		mayaPrompt := `You are Maya, an executive business English coach having a targeted coaching call with the user.
+You help your student sound professional, articulate, and persuasive in workplace situations, presentations, and interviews.
+Follow the 3-phase pedagogical protocol:
+Phase 1: Identify informal, vague, or non-native phrasing and rephrase it into crisp, executive-level business English.
+Phase 2: Briefly explain the nuance and offer a quick practice drill.
+Phase 3: Substantively address their business idea and ask a strategic follow-up question.
+Keep your tone polished, warm, and empowering. If the user asks to save the topic, invoke the 'save_conversation' tool.`
+
+		_, err = d.conn.Exec(`
+			INSERT INTO personas (id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, avatar_icon)
+			VALUES 
+			('teacher-sarah', 'default_user', 'Sarah', 'Patient, supportive English teacher focused on gentle corrections and natural dialogue.', ?, 'Aoede', 'teacher', 1, 'sarah'),
+			('friend-leo', 'default_user', 'Leo', 'Easygoing conversation buddy for casual chats about daily life, travel, movies, and hobbies.', ?, 'Puck', 'free_chat', 0, 'leo'),
+			('coach-maya', 'default_user', 'Maya', 'Executive business English and interview coach focusing on professional clarity and vocabulary.', ?, 'Kore', 'teacher', 0, 'maya');
+		`, sarahPrompt, leoPrompt, mayaPrompt)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// User Profile
+func (d *DB) GetUserProfile(userID string) (*UserProfile, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var p UserProfile
+	err := d.conn.QueryRow(`
+		SELECT id, user_id, display_name, COALESCE(phonetic_note, ''), created_at 
+		FROM user_profile 
+		WHERE user_id = ? 
+		ORDER BY id DESC LIMIT 1
+	`, userID).Scan(&p.ID, &p.UserID, &p.DisplayName, &p.PhoneticNote, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		// Return default
+		return &UserProfile{
+			UserID:       userID,
+			DisplayName:  "Alex",
+			PhoneticNote: "Alex (pronounced AH-leks)",
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (d *DB) UpdateUserProfile(userID, displayName, phoneticNote string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var count int
+	err := d.conn.QueryRow(`SELECT COUNT(*) FROM user_profile WHERE user_id = ?`, userID).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		_, err = d.conn.Exec(`
+			INSERT INTO user_profile (user_id, display_name, phonetic_note) 
+			VALUES (?, ?, ?)
+		`, userID, displayName, phoneticNote)
+	} else {
+		_, err = d.conn.Exec(`
+			UPDATE user_profile 
+			SET display_name = ?, phonetic_note = ? 
+			WHERE user_id = ?
+		`, displayName, phoneticNote, userID)
+	}
+	return err
+}
+
+// Personas
+func (d *DB) ListPersonas(userID string) ([]Persona, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.conn.Query(`
+		SELECT id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, COALESCE(avatar_icon, ''), created_at
+		FROM personas
+		WHERE user_id = ? OR is_default = 1
+		ORDER BY is_default DESC, created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Persona
+	for rows.Next() {
+		var p Persona
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.ShortDesc, &p.SystemPrompt, &p.VoiceName, &p.Mode, &p.IsDefault, &p.AvatarIcon, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, p)
+	}
+	return list, rows.Err()
+}
+
+func (d *DB) GetPersona(id string) (*Persona, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var p Persona
+	err := d.conn.QueryRow(`
+		SELECT id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, COALESCE(avatar_icon, ''), created_at
+		FROM personas
+		WHERE id = ?
+	`, id).Scan(&p.ID, &p.UserID, &p.Name, &p.ShortDesc, &p.SystemPrompt, &p.VoiceName, &p.Mode, &p.IsDefault, &p.AvatarIcon, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (d *DB) CreatePersona(p *Persona) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if p.ID == "" {
+		p.ID = "custom-" + uuid.New().String()[:8]
+	}
+	if p.UserID == "" {
+		p.UserID = "default_user"
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO personas (id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, avatar_icon)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.UserID, p.Name, p.ShortDesc, p.SystemPrompt, p.VoiceName, p.Mode, p.IsDefault, p.AvatarIcon)
+	return err
+}
+
+func (d *DB) DeletePersona(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.conn.Exec(`DELETE FROM personas WHERE id = ? AND is_default = 0`, id)
+	return err
+}
+
+// Saved Conversations
+func (d *DB) ListConversations(userID string) ([]SavedConversation, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.conn.Query(`
+		SELECT s.id, s.user_id, s.persona_id, COALESCE(p.name, 'Unknown'), s.topic_title, s.summary, 
+		       COALESCE(s.key_points, ''), COALESCE(s.open_question, ''), s.created_at, s.last_resumed_at
+		FROM saved_conversations s
+		LEFT JOIN personas p ON s.persona_id = p.id
+		WHERE s.user_id = ?
+		ORDER BY COALESCE(s.last_resumed_at, s.created_at) DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []SavedConversation
+	for rows.Next() {
+		var c SavedConversation
+		if err := rows.Scan(&c.ID, &c.UserID, &c.PersonaID, &c.PersonaName, &c.TopicTitle, &c.Summary, &c.KeyPoints, &c.OpenQuestion, &c.CreatedAt, &c.LastResumedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (d *DB) GetConversation(id string) (*SavedConversation, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var c SavedConversation
+	err := d.conn.QueryRow(`
+		SELECT s.id, s.user_id, s.persona_id, COALESCE(p.name, 'Unknown'), s.topic_title, s.summary, 
+		       COALESCE(s.key_points, ''), COALESCE(s.open_question, ''), s.created_at, s.last_resumed_at
+		FROM saved_conversations s
+		LEFT JOIN personas p ON s.persona_id = p.id
+		WHERE s.id = ?
+	`, id).Scan(&c.ID, &c.UserID, &c.PersonaID, &c.PersonaName, &c.TopicTitle, &c.Summary, &c.KeyPoints, &c.OpenQuestion, &c.CreatedAt, &c.LastResumedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (d *DB) SaveConversation(conv *SavedConversation) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if conv.ID == "" {
+		conv.ID = "topic-" + uuid.New().String()[:8]
+	}
+	if conv.UserID == "" {
+		conv.UserID = "default_user"
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO saved_conversations (id, user_id, persona_id, topic_title, summary, key_points, open_question)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, conv.ID, conv.UserID, conv.PersonaID, conv.TopicTitle, conv.Summary, conv.KeyPoints, conv.OpenQuestion)
+	return err
+}
+
+func (d *DB) UpdateConversationResumed(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	_, err := d.conn.Exec(`
+		UPDATE saved_conversations
+		SET last_resumed_at = ?
+		WHERE id = ?
+	`, now, id)
+	return err
+}
+
+func (d *DB) DeleteConversation(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.conn.Exec(`DELETE FROM saved_conversations WHERE id = ?`, id)
+	return err
+}
+
+// App Settings
+func (d *DB) GetSetting(key string) (string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var val string
+	err := d.conn.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+func (d *DB) SetSetting(key, value string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.conn.Exec(`
+		INSERT INTO app_settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}
+
+func (d *DB) GetAllSettings() (map[string]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.conn.Query(`SELECT key, value FROM app_settings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		settings[k] = v
+	}
+	return settings, rows.Err()
+}
