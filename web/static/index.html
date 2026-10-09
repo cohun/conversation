@@ -143,14 +143,14 @@
             <span id="muteLabel" class="call-control-label">Mute</span>
           </button>
 
-          <!-- Pass Turn ("Átadom a szót") -->
-          <button id="passTurnBtn" class="call-control-btn primary-pass" title="Pass Turn to Partner">
+          <!-- Pass Turn / Interrupt ("Átadom a szót" / "Félbeszakítás") -->
+          <button id="passTurnBtn" class="call-control-btn primary-pass" title="Átadom a szót / Your Turn">
             <div class="call-control-circle">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <svg id="passTurnIcon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="9 18 15 12 9 6"></polyline>
               </svg>
             </div>
-            <span class="call-control-label">Your Turn</span>
+            <span id="passTurnLabel" class="call-control-label">Átadom a szót</span>
           </button>
 
           <!-- Bookmark / Save Topic ("Téma mentése") -->
@@ -283,19 +283,19 @@
           <div class="form-group">
             <label class="form-label" for="settingsModelSelect">Gemini Live Model Resolution</label>
             <select id="settingsModelSelect" class="form-select">
-              <option value="auto">Auto (Dynamically discover newest bidiGenerateContent model)</option>
-              <option value="models/gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
-              <option value="models/gemini-2.0-flash">gemini-2.0-flash</option>
-              <option value="models/gemini-2.0-flash-realtime-exp">gemini-2.0-flash-realtime-exp</option>
-              <option value="models/gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="auto">Auto (Always prioritize fastest & latest Gemini Live model)</option>
+              <option value="models/gemini-3.8-live">models/gemini-3.8-live (Recommended - Pure Live Audio)</option>
+              <option value="models/gemini-3.8-flash">models/gemini-3.8-flash</option>
+              <option value="models/gemini-3.5-flash">models/gemini-3.5-flash</option>
+              <option value="models/gemini-flash-latest">models/gemini-flash-latest</option>
             </select>
-            <span class="form-hint">Server dynamically queries available models with bidiGenerateContent capability and manages fallback failover.</span>
+            <span class="form-hint">Server dynamically queries and prioritizes the newest Gemini Live models with automated fallback.</span>
           </div>
 
           <div class="form-group">
             <label class="form-label">Active Resolved Model</label>
             <div id="activeModelBadge" style="font-family: monospace; font-size: 0.85rem; padding: 8px 12px; background: var(--bg-surface-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); color: var(--sage-600);">
-              models/gemini-2.0-flash-exp
+              models/gemini-3.8-live
             </div>
           </div>
         </div>

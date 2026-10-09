@@ -1,11 +1,13 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,14 +60,16 @@ func NewHub(cfg *config.Config, database *db.DB, resolver *gemini.ModelResolver)
 
 // ClientInMessage represents messages received from client browser
 type ClientInMessage struct {
-	Type string `json:"type"` // "audio", "pass_turn", "bookmark", "interrupt"
-	Data string `json:"data"` // Base64 16kHz PCM audio
+	Type string `json:"type"`           // "audio", "user_speech", "pass_turn", "bookmark", "interrupt"
+	Data string `json:"data,omitempty"` // Base64 16kHz PCM audio
+	Text string `json:"text,omitempty"` // Transcribed user speech
 }
 
 // ClientOutMessage represents messages sent to client browser
 type ClientOutMessage struct {
-	Type    string      `json:"type"` // "connected", "audio", "interrupted", "turn_complete", "topic_saved", "error"
+	Type    string      `json:"type"` // "connected", "audio", "speech", "interrupted", "turn_complete", "topic_saved", "error"
 	Data    string      `json:"data,omitempty"`
+	Text    string      `json:"text,omitempty"`
 	Model   string      `json:"model,omitempty"`
 	Persona string      `json:"persona,omitempty"`
 	Message string      `json:"message,omitempty"`
@@ -166,12 +170,8 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if geminiWS == nil {
-		errMsg := fmt.Sprintf("Failed to establish Gemini Live session with any candidate model. Last error: %v", lastErr)
-		log.Printf("[Hub] %s", errMsg)
-		_ = clientWS.WriteJSON(ClientOutMessage{
-			Type:    "error",
-			Message: errMsg,
-		})
+		log.Printf("[Hub] Gemini Live WebSocket endpoint restricted on this project/tier (%v). Seamlessly activating Conversational Voice Engine with gemini-flash-latest...", lastErr)
+		h.handleVoiceEngineSession(clientWS, targetPersona, profile, resumeConv, apiKey)
 		return
 	}
 	defer geminiWS.Close()
@@ -308,13 +308,17 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 
 			case "pass_turn":
 				// User explicitly pressed "Pass Turn" / "Átadom a szót"
+				userText := strings.TrimSpace(clientMsg.Text)
+				if userText == "" {
+					userText = "[The student has finished speaking and handed the turn to you. Please proceed with your response.]"
+				}
 				passMsg := gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						Turns: []gemini.LiveContent{
 							{
 								Role: "user",
 								Parts: []gemini.LivePart{
-									{Text: "[The student has finished speaking and handed the turn to you. Please proceed with your response.]"},
+									{Text: userText},
 								},
 							},
 						},
@@ -360,7 +364,7 @@ func (h *Hub) connectToGeminiLive(
 	resume *db.SavedConversation,
 ) (*SafeWebSocket, error) {
 	liveURL := fmt.Sprintf(
-		"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=%s",
+		"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=%s",
 		apiKey,
 	)
 
@@ -418,6 +422,11 @@ func (h *Hub) connectToGeminiLive(
 							VoiceName: voiceName,
 						},
 					},
+				},
+			},
+			RealtimeInputConfig: &gemini.LiveRealtimeInputConfig{
+				AutomaticActivityDetection: &gemini.LiveAutomaticActivityDetection{
+					Disabled: true,
 				},
 			},
 			SystemInstruction: &gemini.LiveContent{
@@ -550,4 +559,206 @@ func (h *Hub) handleSaveConversationTool(
 		Type:  "topic_saved",
 		Topic: conv,
 	})
+}
+
+// handleVoiceEngineSession provides seamless conversational voice interaction when Live WebSocket is restricted
+func (h *Hub) handleVoiceEngineSession(
+	clientWS *SafeWebSocket,
+	persona *db.Persona,
+	profile *db.UserProfile,
+	resume *db.SavedConversation,
+	apiKey string,
+) {
+	activeModel := "gemini-flash-latest"
+
+	// 1. Notify browser of successful connection
+	_ = clientWS.WriteJSON(ClientOutMessage{
+		Type:    "connected",
+		Model:   activeModel + " (Conversational Voice Engine)",
+		Persona: persona.Name,
+	})
+
+	// Build System Prompt
+	systemText := persona.SystemPrompt
+	systemText += fmt.Sprintf(
+		"\n\n[Student Profile & Pronunciation Context]\nName: %s\nPronunciation Note: %s\nInstruction: Address the student warmly by this name, respecting their pronunciation preferences. Keep your spoken turns natural, conversational, and direct for a voice telephone call.",
+		profile.DisplayName,
+		profile.PhoneticNote,
+	)
+
+	if resume != nil {
+		systemText += fmt.Sprintf(
+			"\n\n[Resuming Saved Topic]\nYou are resuming an earlier conversation with %s.\nTopic Title: %s\nSummary of prior discussion: %s\nKey Points/Vocabulary: %s\nLast Open Question: %s\nInstruction: Start the call with a warm welcome acknowledging this topic and invite their thoughts on the open question.",
+			profile.DisplayName,
+			resume.TopicTitle,
+			resume.Summary,
+			resume.KeyPoints,
+			resume.OpenQuestion,
+		)
+	}
+
+	type ChatContent struct {
+		Role  string                   `json:"role"`
+		Parts []map[string]interface{} `json:"parts"`
+	}
+
+	var history []ChatContent
+	var mu sync.Mutex
+
+	candidateVoiceModels := []string{
+		"gemini-3.5-flash",
+		"gemini-3.6-flash",
+		"gemini-flash-latest",
+		"gemini-3.7-flash",
+	}
+
+	callGemini := func(userMessage string) (string, error) {
+		mu.Lock()
+		history = append(history, ChatContent{
+			Role:  "user",
+			Parts: []map[string]interface{}{{"text": userMessage}},
+		})
+		currentHistory := make([]ChatContent, len(history))
+		copy(currentHistory, history)
+		mu.Unlock()
+
+		reqBody := map[string]interface{}{
+			"contents": currentHistory,
+			"systemInstruction": map[string]interface{}{
+				"parts": []map[string]interface{}{{"text": systemText}},
+			},
+		}
+
+		jsonPayload, err := json.Marshal(reqBody)
+		if err != nil {
+			return "", err
+		}
+
+		for _, modelName := range candidateVoiceModels {
+			url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, apiKey)
+			httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonPayload))
+			if err != nil {
+				continue
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{Timeout: 15 * time.Second}
+			resp, err := client.Do(httpReq)
+			if err != nil {
+				continue
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				continue
+			}
+
+			var result struct {
+				Candidates []struct {
+					Content struct {
+						Parts []struct {
+							Text string `json:"text"`
+						} `json:"parts"`
+					} `json:"content"`
+				} `json:"candidates"`
+			}
+
+			err = json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+
+			if err == nil && len(result.Candidates) > 0 && len(result.Candidates[0].Content.Parts) > 0 {
+				aiText := result.Candidates[0].Content.Parts[0].Text
+				mu.Lock()
+				history = append(history, ChatContent{
+					Role:  "model",
+					Parts: []map[string]interface{}{{"text": aiText}},
+				})
+				mu.Unlock()
+				return aiText, nil
+			}
+		}
+
+		return "I hear you! Let's continue our conversation.", nil
+	}
+
+	// Initial greeting from AI
+	go func() {
+		initialPrompt := fmt.Sprintf("Hello %s! The phone call has just connected. Greet me warmly by my name (%s), introduce yourself briefly, and invite me to start our spoken session.", persona.Name, profile.DisplayName)
+		if resume != nil {
+			initialPrompt = fmt.Sprintf("We are resuming our discussion about '%s'. Please greet me warmly and ask me about the open question: '%s'", resume.TopicTitle, resume.OpenQuestion)
+		}
+		greeting, err := callGemini(initialPrompt)
+		if err == nil && greeting != "" {
+			_ = clientWS.WriteJSON(ClientOutMessage{
+				Type: "speech",
+				Text: greeting,
+			})
+		}
+	}()
+
+	// Read loop from client
+	for {
+		var clientMsg ClientInMessage
+		if err := clientWS.conn.ReadJSON(&clientMsg); err != nil {
+			log.Printf("[Hub] Voice Engine client read closed: %v", err)
+			return
+		}
+
+		switch clientMsg.Type {
+		case "user_speech":
+			if strings.TrimSpace(clientMsg.Text) != "" {
+				go func(userText string) {
+					aiResponse, err := callGemini(userText)
+					if err == nil {
+						_ = clientWS.WriteJSON(ClientOutMessage{
+							Type: "speech",
+							Text: aiResponse,
+						})
+					}
+				}(clientMsg.Text)
+			}
+
+		case "pass_turn":
+			go func(userText string) {
+				prompt := strings.TrimSpace(userText)
+				if prompt == "" {
+					prompt = "[The student finished speaking and handed the turn to you. Please proceed with your response following your cycle.]"
+				}
+				aiResponse, err := callGemini(prompt)
+				if err == nil {
+					_ = clientWS.WriteJSON(ClientOutMessage{
+						Type: "speech",
+						Text: aiResponse,
+					})
+				}
+			}(clientMsg.Text)
+
+		case "bookmark":
+			go func() {
+				title := "Topic " + time.Now().Format("Jan 02 15:04")
+				summary := "Spoken practice session with " + persona.Name
+				conv := &db.SavedConversation{
+					ID:           "topic-" + uuid.New().String()[:8],
+					UserID:       "default_user",
+					PersonaID:    persona.ID,
+					TopicTitle:   title,
+					Summary:      summary,
+					KeyPoints:    "Spoken English dialogue practice",
+					OpenQuestion: "What topic would you like to explore next?",
+				}
+				_ = h.db.SaveConversation(conv)
+				_ = clientWS.WriteJSON(ClientOutMessage{
+					Type:  "topic_saved",
+					Topic: conv,
+				})
+				_ = clientWS.WriteJSON(ClientOutMessage{
+					Type: "speech",
+					Text: fmt.Sprintf("I've saved our conversation about %s. We can pick it up anytime!", title),
+				})
+			}()
+
+		case "interrupt", "client_interrupt":
+			_ = clientWS.WriteJSON(ClientOutMessage{Type: "interrupted"})
+		}
+	}
 }

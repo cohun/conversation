@@ -702,6 +702,8 @@ body {
   z-index: 2;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
   transition: all 0.4s ease;
+  cursor: pointer;
+  user-select: none;
 }
 
 /* State-specific Orb & Wave Styles */
@@ -882,6 +884,26 @@ body {
 .call-control-btn.primary-pass:hover .call-control-circle {
   background: var(--sage-500);
   color: #fff;
+}
+
+.call-control-btn.interrupt-mode .call-control-circle {
+  background: var(--terracotta-100);
+  border-color: var(--terracotta-500);
+  color: var(--terracotta-600);
+  width: 60px;
+  height: 60px;
+  font-size: 1.4rem;
+  animation: interruptPulse 1.5s infinite;
+}
+
+.call-control-btn.interrupt-mode:hover .call-control-circle {
+  background: var(--terracotta-500);
+  color: #fff;
+}
+
+@keyframes interruptPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(209, 107, 71, 0.45); }
+  50% { box-shadow: 0 0 0 10px rgba(209, 107, 71, 0); }
 }
 
 .call-control-label {

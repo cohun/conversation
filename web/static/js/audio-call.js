@@ -1,12 +1,12 @@
 // Antigravity Voice Call Manager
-// Handles Web Audio API, AudioWorklet (16kHz PCM), 24kHz PCM Playback, WebSocket, and Barge-In
+// Handles Web Audio API, AudioWorklet (16kHz PCM), 24kHz PCM Playback, Speech Synthesis & Recognition, WebSocket, and Barge-In
 
 class AudioCallManager {
   constructor(options = {}) {
     this.personaId = options.personaId || 'teacher-sarah';
     this.resumeId = options.resumeId || '';
     this.apiKey = options.apiKey || '';
-    
+
     // Callbacks
     this.onStateChange = options.onStateChange || (() => {});
     this.onTimerUpdate = options.onTimerUpdate || (() => {});
@@ -19,6 +19,7 @@ class AudioCallManager {
     this.audioCtx = null;
     this.micStream = null;
     this.workletNode = null;
+    this.recognition = null;
     this.isMuted = false;
     this.state = 'connecting'; // connecting | listening | speaking | thinking | ended
 
@@ -28,9 +29,9 @@ class AudioCallManager {
     this.nextPlayTime = 0;
     this.isAiSpeaking = false;
 
-    // Barge-in detection
-    this.bargeInThreshold = 0.055;
-    this.consecutiveSpeechFrames = 0;
+    // Turn buffer & Speech recognition helper
+    this.pendingTranscript = '';
+    this.resetSpeechRecognitionTranscript = null;
 
     // Timer
     this.startTime = null;
@@ -59,44 +60,41 @@ class AudioCallManager {
       });
 
       // Load PCM downsampler AudioWorklet
-      await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js');
+      try {
+        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js');
+        const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+        this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
-      const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
-      this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
+        // Handle audio chunks from worklet
+        this.workletNode.port.onmessage = (event) => {
+          const { pcm } = event.data;
+          if (!pcm) return;
 
-      // Handle audio chunks and RMS energy from worklet
-      this.workletNode.port.onmessage = (event) => {
-        const { pcm, rms } = event.data;
-        if (!pcm) return;
+          // Suppress mic transmission while AI is speaking or muted
+          // This completely cuts speaker bleed feedback to the microphone
+          if (this.isAiSpeaking || this.isMuted) return;
 
-        // Barge-in Voice Activity Detection
-        if (this.isAiSpeaking && !this.isMuted) {
-          if (rms > this.bargeInThreshold) {
-            this.consecutiveSpeechFrames++;
-            if (this.consecutiveSpeechFrames >= 2) { // ~60-90ms of user speech
-              this.handleLocalBargeIn();
-            }
-          } else {
-            this.consecutiveSpeechFrames = 0;
+          // Send 16kHz PCM audio chunk to WebSocket
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            const base64Audio = this.arrayBufferToBase64(pcm);
+            this.ws.send(JSON.stringify({
+              type: 'audio',
+              data: base64Audio,
+            }));
           }
-        }
+        };
 
-        // Send 16kHz PCM audio chunk to WebSocket
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.isMuted) {
-          const base64Audio = this.arrayBufferToBase64(pcm);
-          this.ws.send(JSON.stringify({
-            type: 'audio',
-            data: base64Audio,
-          }));
-        }
-      };
+        sourceNode.connect(this.workletNode);
+        const silentGain = this.audioCtx.createGain();
+        silentGain.gain.value = 0;
+        this.workletNode.connect(silentGain);
+        silentGain.connect(this.audioCtx.destination);
+      } catch (workletErr) {
+        console.warn('[AudioCall] AudioWorklet init notice:', workletErr);
+      }
 
-      sourceNode.connect(this.workletNode);
-      // Connect to dummy destination node so worklet keeps running without echo
-      const silentGain = this.audioCtx.createGain();
-      silentGain.gain.value = 0;
-      this.workletNode.connect(silentGain);
-      silentGain.connect(this.audioCtx.destination);
+      // Initialize Speech Recognition for conversational turns
+      this.initSpeechRecognition();
 
       // Connect WebSocket
       this.connectWebSocket();
@@ -105,6 +103,65 @@ class AudioCallManager {
       console.error('[AudioCall] Startup error:', err);
       this.onError('Microphone or Audio initialization failed: ' + (err.message || err));
       this.endCall();
+    }
+  }
+
+  initSpeechRecognition() {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      console.log('[AudioCall] Native SpeechRecognition not available in this browser.');
+      return;
+    }
+
+    try {
+      this.recognition = new SpeechRec();
+      this.recognition.continuous = true;
+      this.recognition.interimResults = true;
+      this.recognition.lang = 'en-US';
+
+      let sessionTranscript = '';
+
+      this.resetSpeechRecognitionTranscript = () => {
+        sessionTranscript = '';
+        this.pendingTranscript = '';
+      };
+
+      this.recognition.onresult = (event) => {
+        // While muted or AI is speaking, ignore microphone speech to prevent feedback
+        if (this.isMuted || this.isAiSpeaking) return;
+
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            sessionTranscript += ' ' + event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+
+        const fullSpoken = (sessionTranscript + ' ' + interim).trim();
+        if (fullSpoken) {
+          this.pendingTranscript = fullSpoken;
+        }
+      };
+
+      this.recognition.onerror = (event) => {
+        if (event.error !== 'no-speech') {
+          console.warn('[AudioCall] SpeechRecognition error:', event.error);
+        }
+      };
+
+      this.recognition.onend = () => {
+        if (this.state !== 'ended' && this.recognition) {
+          try {
+            this.recognition.start();
+          } catch (e) {}
+        }
+      };
+
+      this.recognition.start();
+    } catch (e) {
+      console.warn('[AudioCall] SpeechRecognition startup notice:', e);
     }
   }
 
@@ -160,6 +217,12 @@ class AudioCallManager {
         }
         break;
 
+      case 'speech':
+        if (msg.text) {
+          this.speakText(msg.text);
+        }
+        break;
+
       case 'interrupted':
         console.log('[AudioCall] Interrupt received - flushing audio');
         this.flushAudioQueue();
@@ -167,8 +230,6 @@ class AudioCallManager {
         break;
 
       case 'turn_complete':
-        // The AI finished generating tokens for its turn.
-        // Once the audio queue completes, state will transition back to 'listening'.
         break;
 
       case 'topic_saved':
@@ -183,10 +244,9 @@ class AudioCallManager {
     }
   }
 
-  // Handle local Barge-in (user starts speaking while AI is talking)
-  handleLocalBargeIn() {
-    console.log('[AudioCall] Barge-in triggered locally!');
-    this.consecutiveSpeechFrames = 0;
+  // Explicit manual interrupt triggered only by user button press
+  manualInterrupt() {
+    console.log('[AudioCall] Manual interrupt requested by user button');
     this.flushAudioQueue();
     this.setState('listening');
 
@@ -195,7 +255,60 @@ class AudioCallManager {
     }
   }
 
-  // Enqueue 24kHz PCM chunk received from Gemini
+  handleLocalBargeIn() {
+    this.manualInterrupt();
+  }
+
+  // Speak text using Web Speech API synthesis
+  speakText(rawText) {
+    if (!('speechSynthesis' in window)) {
+      console.warn('[AudioCall] SpeechSynthesis not supported in browser');
+      return;
+    }
+    this.flushAudioQueue();
+
+    // Clean text of markdown formatting (asterisks, hashtags, quotes) for clean spoken output
+    const cleanText = rawText
+      .replace(/#{1,6}\s*/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/>/g, '')
+      .replace(/_{1,2}/g, '')
+      .replace(/`{1,3}/g, '')
+      .trim();
+
+    if (!cleanText) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.96; // calm, natural teacher pace
+    utterance.pitch = 1.05;
+
+    // Pick best natural English voice
+    const voices = window.speechSynthesis.getVoices();
+    const enVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha') || v.name.includes('Jenny') || v.name.includes('Female'))) ||
+                    voices.find(v => v.lang.startsWith('en'));
+    if (enVoice) {
+      utterance.voice = enVoice;
+    }
+
+    utterance.onstart = () => {
+      this.setAiSpeaking(true);
+    };
+
+    utterance.onend = () => {
+      this.setAiSpeaking(false);
+    };
+
+    utterance.onerror = (e) => {
+      console.warn('[AudioCall] SpeechSynthesis notice:', e);
+      this.setAiSpeaking(false);
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  // Enqueue 24kHz PCM chunk received from Gemini Live
   enqueueAudioChunk(base64Data) {
     if (!this.audioCtx || this.audioCtx.state === 'closed') return;
 
@@ -223,7 +336,7 @@ class AudioCallManager {
   scheduleAudioPlayback(buffer) {
     const now = this.audioCtx.currentTime;
     if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.03; // small lead buffer for jitter
+      this.nextPlayTime = now + 0.03;
     }
 
     const source = this.audioCtx.createBufferSource();
@@ -248,6 +361,12 @@ class AudioCallManager {
   }
 
   flushAudioQueue() {
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+
     for (const source of this.activeSourceNodes) {
       try {
         source.stop();
@@ -266,7 +385,11 @@ class AudioCallManager {
     if (speaking) {
       this.setState('speaking');
     } else {
-      if (this.state === 'speaking') {
+      this.pendingTranscript = '';
+      if (this.resetSpeechRecognitionTranscript) {
+        this.resetSpeechRecognitionTranscript();
+      }
+      if (this.state === 'speaking' || this.state === 'thinking') {
         this.setState('listening');
       }
     }
@@ -278,9 +401,23 @@ class AudioCallManager {
   }
 
   passTurn() {
+    if (this.isAiSpeaking) {
+      // If AI is currently speaking, pressing this button triggers manual Interrupt!
+      this.manualInterrupt();
+      return;
+    }
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const textToSend = (this.pendingTranscript || '').trim();
+      this.pendingTranscript = '';
+      if (this.resetSpeechRecognitionTranscript) {
+        this.resetSpeechRecognitionTranscript();
+      }
       this.setState('thinking');
-      this.ws.send(JSON.stringify({ type: 'pass_turn' }));
+      this.ws.send(JSON.stringify({
+        type: 'pass_turn',
+        text: textToSend,
+      }));
     }
   }
 
@@ -323,6 +460,13 @@ class AudioCallManager {
     }
 
     this.flushAudioQueue();
+
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+        this.recognition = null;
+      } catch (e) {}
+    }
 
     if (this.ws) {
       try {

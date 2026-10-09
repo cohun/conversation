@@ -12,9 +12,9 @@ func TestModelResolverCandidateOrdering(t *testing.T) {
 		t.Fatalf("Expected candidate models, got none")
 	}
 
-	// First default candidate should be 2.0-flash-exp
-	if candidates[0] != "models/gemini-2.0-flash-exp" {
-		t.Errorf("Expected first candidate models/gemini-2.0-flash-exp, got %s", candidates[0])
+	// First default candidate should be models/gemini-3.8-live
+	if candidates[0] != "models/gemini-3.8-live" {
+		t.Errorf("Expected first candidate models/gemini-3.8-live, got %s", candidates[0])
 	}
 
 	// Test explicit ENV override
@@ -29,8 +29,8 @@ func TestRankModels(t *testing.T) {
 	raw := []string{
 		"models/text-embedding-004",
 		"models/gemini-1.5-pro",
-		"models/gemini-2.0-flash",
-		"models/gemini-2.0-flash-realtime-exp",
+		"models/gemini-3.8-flash",
+		"models/gemini-3.8-live",
 	}
 
 	ranked := rankModels(raw)
@@ -38,8 +38,8 @@ func TestRankModels(t *testing.T) {
 		t.Fatalf("Ranked length mismatch: expected %d, got %d", len(raw), len(ranked))
 	}
 
-	// 2.0-flash and realtime should be at the front
-	if ranked[0] != "models/gemini-2.0-flash" && ranked[0] != "models/gemini-2.0-flash-realtime-exp" {
-		t.Errorf("Expected flash/realtime to be prioritized, got %s", ranked[0])
+	// 3.8-live should be at the front
+	if ranked[0] != "models/gemini-3.8-live" {
+		t.Errorf("Expected gemini-3.8-live to be first, got %s", ranked[0])
 	}
 }

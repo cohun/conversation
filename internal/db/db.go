@@ -285,7 +285,7 @@ func (d *DB) ListPersonas(userID string) ([]Persona, error) {
 	}
 	defer rows.Close()
 
-	var list []Persona
+	list := []Persona{}
 	for rows.Next() {
 		var p Persona
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.ShortDesc, &p.SystemPrompt, &p.VoiceName, &p.Mode, &p.IsDefault, &p.AvatarIcon, &p.CreatedAt); err != nil {
@@ -356,7 +356,7 @@ func (d *DB) ListConversations(userID string) ([]SavedConversation, error) {
 	}
 	defer rows.Close()
 
-	var list []SavedConversation
+	list := []SavedConversation{}
 	for rows.Next() {
 		var c SavedConversation
 		if err := rows.Scan(&c.ID, &c.UserID, &c.PersonaID, &c.PersonaName, &c.TopicTitle, &c.Summary, &c.KeyPoints, &c.OpenQuestion, &c.CreatedAt, &c.LastResumedAt); err != nil {

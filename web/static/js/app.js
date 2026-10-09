@@ -89,6 +89,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       // Call Screen Controls
       document.getElementById('muteBtn').addEventListener('click', () => this.toggleCallMute());
       document.getElementById('passTurnBtn').addEventListener('click', () => this.passCallTurn());
+      document.getElementById('pulseCoreOrb').addEventListener('click', () => this.passCallTurn());
       document.getElementById('bookmarkBtn').addEventListener('click', () => this.bookmarkCallTopic());
       document.getElementById('endCallBtn').addEventListener('click', () => this.endActiveCall());
     },
@@ -355,7 +356,8 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
     async fetchTopics() {
       try {
         const res = await fetch('/api/conversations');
-        this.topics = await res.json();
+        const data = await res.json();
+        this.topics = Array.isArray(data) ? data : [];
         this.renderTopics();
       } catch (err) {
         console.error('Failed to fetch topics:', err);
@@ -559,31 +561,61 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
         case 'connecting':
           statusText.textContent = 'Connecting...';
           stateLabel.textContent = 'Establishing voice connection...';
-          bargeInTip.textContent = 'Please wait while we connect with Google Gemini Live';
+          bargeInTip.textContent = 'Connecting to voice session...';
+          this.setPassTurnButtonMode('pass');
           break;
 
         case 'listening':
           statusText.textContent = 'Connected';
           stateLabel.textContent = 'Listening to you...';
-          bargeInTip.textContent = 'Speak anytime, or tap "Your Turn" to pass';
+          bargeInTip.textContent = 'Speak anytime, then tap "Átadom a szót" for the response!';
+          this.setPassTurnButtonMode('pass');
           break;
 
         case 'speaking':
           statusText.textContent = 'Connected';
           stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} is speaking...`;
-          bargeInTip.textContent = 'Start speaking anytime to interrupt (Barge-in)';
+          bargeInTip.textContent = 'Tap "Félbeszakítás" (or the orb) to interrupt!';
+          this.setPassTurnButtonMode('interrupt');
           break;
 
         case 'thinking':
           statusText.textContent = 'Connected';
           stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} is thinking...`;
           bargeInTip.textContent = 'Preparing response...';
+          this.setPassTurnButtonMode('pass');
           break;
 
         case 'ended':
           statusText.textContent = 'Call ended';
           stateLabel.textContent = 'Call completed';
+          this.setPassTurnButtonMode('pass');
           break;
+      }
+    },
+
+    setPassTurnButtonMode(mode) {
+      const btn = document.getElementById('passTurnBtn');
+      const label = document.getElementById('passTurnLabel');
+      const icon = document.getElementById('passTurnIcon');
+      if (!btn) return;
+
+      if (mode === 'interrupt') {
+        btn.classList.remove('primary-pass');
+        btn.classList.add('interrupt-mode');
+        btn.title = 'Félbeszakítás / Interrupt';
+        if (label) label.textContent = 'Félbeszakítás';
+        if (icon) {
+          icon.innerHTML = `<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"></rect>`;
+        }
+      } else {
+        btn.classList.remove('interrupt-mode');
+        btn.classList.add('primary-pass');
+        btn.title = 'Átadom a szót / Your Turn';
+        if (label) label.textContent = 'Átadom a szót';
+        if (icon) {
+          icon.innerHTML = `<polyline points="9 18 15 12 9 6"></polyline>`;
+        }
       }
     },
 

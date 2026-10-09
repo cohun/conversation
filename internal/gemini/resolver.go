@@ -14,11 +14,10 @@ import (
 )
 
 var defaultCandidateModels = []string{
-	"models/gemini-2.0-flash-exp",
-	"models/gemini-2.0-flash",
-	"models/gemini-2.0-flash-realtime-exp",
-	"models/gemini-2.5-flash",
-	"models/gemini-exp-1206",
+	"models/gemini-3.8-live",
+	"models/gemini-3.8-flash",
+	"models/gemini-3.5-flash",
+	"models/gemini-flash-latest",
 }
 
 type ModelResolver struct {
@@ -96,7 +95,9 @@ func rankModels(models []string) []string {
 
 	for _, m := range models {
 		lower := strings.ToLower(m)
-		if strings.Contains(lower, "2.0-flash") || strings.Contains(lower, "2.5-flash") || strings.Contains(lower, "realtime") {
+		if strings.Contains(lower, "3.8-live") || strings.Contains(lower, "live") {
+			prioritized = append([]string{m}, prioritized...)
+		} else if strings.Contains(lower, "3.8-flash") || strings.Contains(lower, "3.7-flash") || strings.Contains(lower, "3.5-flash") || strings.Contains(lower, "flash-latest") {
 			prioritized = append(prioritized, m)
 		} else {
 			others = append(others, m)
@@ -160,5 +161,5 @@ func (r *ModelResolver) GetEffectiveModel(apiKey string) string {
 	if len(candidates) > 0 {
 		return candidates[0]
 	}
-	return "models/gemini-2.0-flash-exp"
+	return "models/gemini-3.8-live"
 }

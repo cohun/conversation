@@ -9,10 +9,19 @@ type LiveClientMessage struct {
 }
 
 type LiveSetup struct {
-	Model             string                `json:"model"`
-	GenerationConfig  *LiveGenerationConfig `json:"generationConfig,omitempty"`
-	SystemInstruction *LiveContent          `json:"systemInstruction,omitempty"`
-	Tools             []LiveTool            `json:"tools,omitempty"`
+	Model               string                   `json:"model"`
+	GenerationConfig    *LiveGenerationConfig    `json:"generationConfig,omitempty"`
+	SystemInstruction   *LiveContent             `json:"systemInstruction,omitempty"`
+	Tools               []LiveTool               `json:"tools,omitempty"`
+	RealtimeInputConfig *LiveRealtimeInputConfig `json:"realtimeInputConfig,omitempty"`
+}
+
+type LiveRealtimeInputConfig struct {
+	AutomaticActivityDetection *LiveAutomaticActivityDetection `json:"automaticActivityDetection,omitempty"`
+}
+
+type LiveAutomaticActivityDetection struct {
+	Disabled bool `json:"disabled"`
 }
 
 type LiveGenerationConfig struct {
