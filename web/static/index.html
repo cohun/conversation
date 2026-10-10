@@ -28,7 +28,19 @@
         </div>
       </div>
       <div class="header-actions">
-        <button id="profileBtn" class="icon-btn" title="Your Profile & Name Pronunciation" aria-label="Profile">
+        <!-- Admin Dashboard button (visible for admins) -->
+        <button id="adminBtn" class="admin-badge-btn" title="Admin Vezérlőpult" aria-label="Admin Dashboard" style="display: none;">
+          <span class="admin-crown">👑</span>
+          <span class="admin-btn-text">Admin</span>
+        </button>
+
+        <!-- Login Trigger Button (visible when unauthenticated) -->
+        <button id="loginTriggerBtn" class="login-trigger-btn" style="display: none;">
+          Belépés
+        </button>
+
+        <!-- Authenticated Profile button -->
+        <button id="profileBtn" class="icon-btn" title="Your Profile & Quota" aria-label="Profile">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
             <circle cx="12" cy="7" r="4"></circle>
@@ -43,17 +55,23 @@
       </div>
     </header>
 
-    <!-- User Pronunciation Handshake Banner -->
+    <!-- User Pronunciation Handshake & Quota Banner -->
     <div class="user-handshake-banner">
       <div class="user-handshake-info">
         <div id="userAvatarBadge" class="user-avatar-badge">A</div>
-        <div>
-          <div id="userDisplayName" class="user-name-title">Hello, Alex 👋</div>
+        <div class="user-handshake-text-wrap">
+          <div class="user-name-row">
+            <span id="userDisplayName" class="user-name-title">Hello, Alex 👋</span>
+            <span id="userQuotaPill" class="user-quota-pill">⏱️ 0 / 45 perc</span>
+          </div>
           <div id="userPhoneticHint" class="user-pronounce-hint">Pronounced: AH-leks</div>
         </div>
       </div>
-      <button id="handshakeEditBtn" class="handshake-edit-btn">Edit</button>
+      <button id="handshakeEditBtn" class="handshake-edit-btn">Profil &amp; Kvóta</button>
     </div>
+
+    <!-- Account Status Warning / Notice Banner (if pending/blocked) -->
+    <div id="accountStatusAlert" class="account-status-alert" style="display: none;"></div>
 
     <!-- Tab Navigation -->
     <nav class="tabs-nav">
@@ -174,41 +192,161 @@
     </div>
 
     <!-- ==========================================
-         Modal 1: Name & Pronunciation Handshake
+         Modal 0: Authentication (Login / Register)
+         ========================================== -->
+    <div id="authModal" class="modal-backdrop">
+      <div class="modal-sheet auth-sheet">
+        <div class="modal-header">
+          <h3 id="authModalTitle" class="modal-title">Bejelentkezés</h3>
+          <button class="modal-close-btn" data-close="authModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Auth Mode Tabs -->
+          <div class="auth-tabs">
+            <button id="authTabLogin" class="auth-tab-btn active" type="button">Belépés</button>
+            <button id="authTabRegister" class="auth-tab-btn" type="button">Új regisztráció</button>
+          </div>
+
+          <!-- Google OAuth Button -->
+          <a id="googleLoginBtn" href="/api/auth/google/login" class="google-auth-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.03h3.88c2.27-2.09 3.665-5.17 3.665-9.12z"/>
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.03c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.13C3.28 21.44 7.35 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.28 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.13z"/>
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.28 2.56 1.25 6.58l4.03 3.13c.95-2.83 3.6-4.96 6.72-4.96z"/>
+            </svg>
+            <span>Folytatás Google fiókkal</span>
+          </a>
+          <p class="auth-admin-hint">Adminisztrátorok (attila.hitb@gmail.com, attila.private@gmail.com) a Google belépéssel automatikusan rendszergazdai jogosultságot kapnak.</p>
+
+          <div class="auth-divider"><span>vagy email címmel</span></div>
+
+          <!-- Auth Error Message Alert -->
+          <div id="authErrorMsg" class="auth-error-box" style="display: none;"></div>
+
+          <!-- Email/Password Form -->
+          <form id="authForm" onsubmit="return false;">
+            <div id="authNameGroup" class="form-group" style="display: none;">
+              <label class="form-label" for="authNameInput">Teljes név / Megszólítás</label>
+              <input type="text" id="authNameInput" class="form-input" placeholder="pl. Kovács Péter">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authEmailInput">Email cím</label>
+              <input type="email" id="authEmailInput" class="form-input" placeholder="nev@pelda.hu" required autocomplete="email">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authPasswordInput">Jelszó</label>
+              <input type="password" id="authPasswordInput" class="form-input" placeholder="Legalább 6 karakter" required autocomplete="current-password">
+            </div>
+
+            <button id="authSubmitBtn" type="button" class="btn-primary auth-submit-btn">
+              Bejelentkezés
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         Modal 1: Name, Pronunciation & Quota / BYOK
          ========================================== -->
     <div id="profileModal" class="modal-backdrop">
-      <div class="modal-sheet">
+      <div class="modal-sheet profile-sheet">
         <div class="modal-header">
-          <h3 class="modal-title">Name & Pronunciation Handshake</h3>
+          <h3 class="modal-title">Felhasználói Fiók és Profil</h3>
           <button class="modal-close-btn" data-close="profileModal">&times;</button>
         </div>
         <div class="modal-body">
+          <!-- Account Status & Badges -->
+          <div class="profile-account-card">
+            <div class="profile-user-summary">
+              <div>
+                <div id="profileEmailDisplay" class="profile-email-text">user@example.com</div>
+                <div class="profile-badge-row">
+                  <span id="profileRoleBadge" class="profile-role-badge">Tanuló</span>
+                  <span id="profileStatusBadge" class="profile-status-badge">Aktív</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quota Bar -->
+            <div class="profile-quota-box">
+              <div class="quota-label-row">
+                <span class="quota-title">⏱️ Mai Beszédkeret</span>
+                <span id="profileQuotaText" class="quota-value">0 / 45 perc</span>
+              </div>
+              <div class="quota-track">
+                <div id="profileQuotaBar" class="quota-fill" style="width: 0%;"></div>
+              </div>
+              <div id="profileQuotaHint" class="quota-subtext">A napi keret éjfélkor automatikusan újraindul.</div>
+            </div>
+          </div>
+
+          <!-- Pronunciation Handshake -->
+          <div class="profile-section-title">🗣️ Név és Kiejtési Segítség</div>
           <div class="form-group">
-            <label class="form-label" for="profileNameInput">Your Name / Nickname</label>
-            <input type="text" id="profileNameInput" class="form-input" placeholder="e.g. Alex, Sándor, Eszter">
-            <span class="form-hint">How the teacher will address you during spoken calls.</span>
+            <label class="form-label" for="profileNameInput">Hogyan szólítson a tanár?</label>
+            <input type="text" id="profileNameInput" class="form-input" placeholder="pl. Attila, Alex, Eszter">
+            <span class="form-hint">Ezen a néven fog hozzád beszélni az angol hívás során.</span>
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="profilePhoneticInput">Pronunciation & Stress Notes</label>
-            <input type="text" id="profilePhoneticInput" class="form-input" placeholder="e.g. Alex (pronounced AH-leks, stress on first syllable)">
-            <span class="form-hint">Provide phonetic cues so the teacher pronounces your name with authentic stress.</span>
+            <label class="form-label" for="profilePhoneticInput">Kiejtési és hangsúlyozási útmutató</label>
+            <input type="text" id="profilePhoneticInput" class="form-input" placeholder="pl. Attila (pronounced uh-TEE-luh, or OT-tee-lah)">
+            <span class="form-hint">Segít az amerikai / brit mesterséges intelligenciának helyesen kiejteni a nevedet.</span>
           </div>
 
           <div class="handshake-mic-box">
             <div>
-              <div style="font-weight: 600; font-size: 0.88rem; color: var(--sage-600); margin-bottom: 2px;">Pronounce into Mic</div>
-              <div id="micStatusText" class="handshake-mic-text">Speak your name aloud to test your microphone level.</div>
+              <div style="font-weight: 600; font-size: 0.88rem; color: var(--sage-600); margin-bottom: 2px;">Mikrofon ellenőrzése</div>
+              <div id="micStatusText" class="handshake-mic-text">Mondd be a neved a hangerő teszteléséhez!</div>
             </div>
             <button id="micTestBtn" class="mic-test-btn" type="button">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path></svg>
-              <span>Test Mic</span>
+              <span>Teszt</span>
             </button>
           </div>
+
+          <!-- BYOK (Bring Your Own Key) Card -->
+          <div class="profile-section-title">🔑 Saját Google API Kulcs (BYOK)</div>
+          <div class="byok-card">
+            <div class="byok-header">
+              <div class="byok-title">Korlátlan Hívások &amp; Ingyenes Működés</div>
+              <span id="customKeyBadge" class="byok-status-pill none">Nincs egyéni kulcs</span>
+            </div>
+            <p class="byok-desc">
+              Ha nem szeretnél a napi limithez igazodni, vagy gyakran beszélnél hosszabb ideig, adj meg egy ingyenes Google AI Studio API kulcsot! Ezzel a hívásaid korlátlanok lesznek.
+            </p>
+            <div class="byok-steps">
+              <div class="byok-step"><span>1</span> Nyisd meg az <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> oldalt.</div>
+              <div class="byok-step"><span>2</span> Jelentkezz be Google-fiókoddal és kattints a <strong>"Create API key"</strong> gombra.</div>
+              <div class="byok-step"><span>3</span> Másold ki a kulcsot, illeszd be az alábbi mezőbe és mentsd el!</div>
+            </div>
+
+            <div class="form-group" style="margin-top: 10px;">
+              <label class="form-label" for="customKeyInput">Google Gemini API Kulcs</label>
+              <input type="password" id="customKeyInput" class="form-input" placeholder="AIzaSy...">
+              <span id="customKeyError" class="form-hint" style="color: var(--danger-500); display: none;"></span>
+            </div>
+
+            <div class="byok-btn-row">
+              <button id="saveCustomKeyBtn" class="btn-primary byok-save-btn" type="button">
+                Kulcs ellenőrzése és mentése
+              </button>
+              <button id="removeCustomKeyBtn" class="btn-secondary byok-remove-btn" type="button" style="display: none;">
+                Kulcs törlése
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="modal-footer">
-          <button class="btn-secondary" data-close="profileModal">Cancel</button>
-          <button id="saveProfileBtn" class="btn-primary">Save Profile</button>
+        <div class="modal-footer profile-modal-footer">
+          <button id="logoutBtn" class="btn-danger-outline" type="button">Kijelentkezés</button>
+          <div class="profile-footer-right">
+            <button class="btn-secondary" data-close="profileModal">Bezárás</button>
+            <button id="saveProfileBtn" class="btn-primary">Profil mentése</button>
+          </div>
         </div>
       </div>
     </div>
@@ -302,6 +440,75 @@
         <div class="modal-footer">
           <button class="btn-secondary" data-close="settingsModal">Cancel</button>
           <button id="saveSettingsBtn" class="btn-primary">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         Modal 4: Admin Dashboard
+         ========================================== -->
+    <div id="adminModal" class="modal-backdrop">
+      <div class="modal-sheet admin-sheet">
+        <div class="modal-header">
+          <div class="admin-modal-title-wrap">
+            <h3 class="modal-title">👑 Rendszergazda Vezérlőpult</h3>
+            <span class="admin-subtitle">Felhasználók jóváhagyása, perclimitek és Gemini Live költségek</span>
+          </div>
+          <button class="modal-close-btn" data-close="adminModal">&times;</button>
+        </div>
+        <div class="modal-body admin-modal-body">
+          <!-- Stats Summary Grid -->
+          <div class="admin-stats-grid">
+            <div class="admin-stat-card">
+              <div class="stat-label">Regisztrált Felhasználók</div>
+              <div id="adminStatTotalUsers" class="stat-value">0</div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="stat-label">Mai Beszédidő</div>
+              <div id="adminStatTodayDuration" class="stat-value">0 perc</div>
+            </div>
+            <div class="admin-stat-card">
+              <div class="stat-label">Összes Beszédidő</div>
+              <div id="adminStatTotalDuration" class="stat-value">0 perc</div>
+            </div>
+            <div class="admin-stat-card highlight-cost">
+              <div class="stat-label">Becsült Gemini Költség</div>
+              <div id="adminStatTotalCost" class="stat-value">$0.00</div>
+              <div class="stat-footnote">(~1.5¢ / perc, BYOK = $0)</div>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div class="admin-toolbar">
+            <h4 class="admin-section-heading">Felhasználók és Hozzáférések</h4>
+            <button id="adminRefreshBtn" class="admin-refresh-btn" type="button" title="Frissítés">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Frissítés</span>
+            </button>
+          </div>
+
+          <!-- User Table / Card List -->
+          <div class="admin-table-wrapper">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Felhasználó</th>
+                  <th>Státusz</th>
+                  <th>Napi limit</th>
+                  <th>Kulcs (BYOK)</th>
+                  <th>Mai idő</th>
+                  <th>Összes idő / Költség</th>
+                  <th>Művelet</th>
+                </tr>
+              </thead>
+              <tbody id="adminUsersTableBody">
+                <!-- Dynamically populated via app.js -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" data-close="adminModal">Bezárás</button>
         </div>
       </div>
     </div>

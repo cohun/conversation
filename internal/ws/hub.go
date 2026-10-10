@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"english-teacher-app/internal/auth"
 	"english-teacher-app/internal/config"
 	"english-teacher-app/internal/db"
 	"english-teacher-app/internal/gemini"
@@ -44,16 +45,18 @@ func (s *SafeWebSocket) Close() error {
 }
 
 type Hub struct {
-	cfg      *config.Config
-	db       *db.DB
-	resolver *gemini.ModelResolver
+	cfg         *config.Config
+	db          *db.DB
+	resolver    *gemini.ModelResolver
+	authHandler *auth.Handler
 }
 
-func NewHub(cfg *config.Config, database *db.DB, resolver *gemini.ModelResolver) *Hub {
+func NewHub(cfg *config.Config, database *db.DB, resolver *gemini.ModelResolver, authHandler *auth.Handler) *Hub {
 	return &Hub{
-		cfg:      cfg,
-		db:       database,
-		resolver: resolver,
+		cfg:         cfg,
+		db:          database,
+		resolver:    resolver,
+		authHandler: authHandler,
 	}
 }
 
@@ -84,31 +87,79 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 	clientWS := &SafeWebSocket{conn: conn}
 	defer clientWS.Close()
 
+	// 1. Authenticate user
+	user := h.authHandler.GetUserFromRequest(r)
+	if user == nil {
+		// Fallback for initial local development if no sessions exist yet
+		if len(h.cfg.AdminEmails) > 0 {
+			user, _ = h.db.GetUserByEmail(h.cfg.AdminEmails[0])
+		}
+	}
+
+	if user == nil {
+		_ = clientWS.WriteJSON(ClientOutMessage{
+			Type:    "error",
+			Message: "A hívás indításához kérlek jelentkezz be a fiókodba.",
+		})
+		return
+	}
+
+	if user.Status == "blocked" {
+		_ = clientWS.WriteJSON(ClientOutMessage{
+			Type:    "error",
+			Message: "A fiókodat az adminisztrátor felfüggesztette.",
+		})
+		return
+	}
+
+	if user.Status == "pending" {
+		_ = clientWS.WriteJSON(ClientOutMessage{
+			Type:    "error",
+			Message: "A regisztrációd jóváhagyásra vár az adminisztrátornál. Hamarosan engedélyezésre kerül!",
+		})
+		return
+	}
+
+	// 2. Check Quota & Custom Key
+	allowed, usedMin, limitMin, isCustomKey, customKey, err := h.db.CheckUserQuota(user.ID)
+	if err != nil {
+		log.Printf("[Hub] Notice: Quota check error for user %s: %v", user.ID, err)
+	}
+	if !allowed {
+		_ = clientWS.WriteJSON(ClientOutMessage{
+			Type:    "error",
+			Message: fmt.Sprintf("Mára elfogyott a napi %d perces kereted (%d perc felhasználva). Add meg a saját ingyenes Google kulcsodat a Profilban a korlátlan folytatáshoz!", limitMin, usedMin),
+		})
+		return
+	}
+
 	q := r.URL.Query()
 	personaID := q.Get("persona_id")
 	resumeID := q.Get("resume_id")
 	clientKey := q.Get("api_key")
 
-	// Determine effective API key
+	// 3. Determine effective API key (BYOK prioritized)
 	apiKey := h.cfg.GeminiAPIKey
-	if apiKey == "" {
+	usedCustomKey := false
+	if isCustomKey && customKey != "" {
+		apiKey = customKey
+		usedCustomKey = true
+	} else if clientKey != "" {
 		apiKey = clientKey
-	}
-	if apiKey == "" {
-		if settingKey, err := h.db.GetSetting("gemini_api_key"); err == nil && settingKey != "" {
-			apiKey = settingKey
-		}
+		usedCustomKey = true
+	} else if settingKey, err := h.db.GetSetting("gemini_api_key"); err == nil && settingKey != "" {
+		apiKey = settingKey
 	}
 
 	if apiKey == "" {
 		_ = clientWS.WriteJSON(ClientOutMessage{
 			Type:    "error",
-			Message: "Gemini API Key is not configured. Please set GEMINI_API_KEY environment variable or enter it in App Settings.",
+			Message: "Gemini API Key is not configured. Please set GEMINI_API_KEY environment variable or enter your own key in Profile.",
 		})
 		return
 	}
 
-	// Load Persona
+	// 4. Load Persona
 	var targetPersona *db.Persona
 	if personaID != "" {
 		p, err := h.db.GetPersona(personaID)
@@ -118,7 +169,7 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if targetPersona == nil {
 		// Fallback to default persona (Sarah)
-		personas, err := h.db.ListPersonas("default_user")
+		personas, err := h.db.ListPersonas(user.ID)
 		if err == nil && len(personas) > 0 {
 			targetPersona = &personas[0]
 		} else {
@@ -132,16 +183,17 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Load User Profile
-	profile, err := h.db.GetUserProfile("default_user")
+	// 5. Load User Profile
+	profile, err := h.db.GetUserProfile(user.ID)
 	if err != nil {
 		profile = &db.UserProfile{
+			UserID:       user.ID,
 			DisplayName:  "Student",
 			PhoneticNote: "Student",
 		}
 	}
 
-	// Load Resume Conversation if any
+	// 6. Load Resume Conversation if any
 	var resumeConv *db.SavedConversation
 	if resumeID != "" {
 		if c, err := h.db.GetConversation(resumeID); err == nil {
@@ -150,7 +202,23 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Connect to Gemini Live with dynamic fallback chain
+	// 7. Track call duration for logging & quotas
+	callStartTime := time.Now()
+	defer func() {
+		durSec := int(time.Since(callStartTime).Seconds())
+		if durSec >= 5 && targetPersona != nil {
+			_ = h.db.LogCall(&db.CallLog{
+				UserID:          user.ID,
+				PersonaID:       targetPersona.ID,
+				StartedAt:       callStartTime,
+				EndedAt:         time.Now(),
+				DurationSeconds: durSec,
+				UsedCustomKey:   usedCustomKey,
+			})
+		}
+	}()
+
+	// 8. Connect to Gemini Live with dynamic fallback chain
 	candidateModels := h.resolver.GetCandidateModels(apiKey)
 	var geminiWS *SafeWebSocket
 	var activeModel string
@@ -169,10 +237,11 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if geminiWS == nil {
-		log.Printf("[Hub] Gemini Live WebSocket endpoint restricted on this project/tier (%v). Seamlessly activating Conversational Voice Engine with gemini-flash-latest...", lastErr)
+		log.Printf("[Hub] Gemini Live WebSocket endpoint restricted on this project/tier (%v). Activating Conversational Voice Engine with gemini-flash-latest...", lastErr)
 		h.handleVoiceEngineSession(clientWS, targetPersona, profile, resumeConv, apiKey)
 		return
 	}
+
 	session := newRollingLiveSession(
 		h,
 		clientWS,

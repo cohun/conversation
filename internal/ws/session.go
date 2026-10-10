@@ -417,6 +417,34 @@ func (s *RollingLiveSession) Run() {
 	// 4. Start Proactive Rollover Loop (every 5.5 minutes) to stay completely clear of timeouts & token exhaustion
 	go s.rolloverTickerLoop(ctx, 330*time.Second)
 
+	// 4b. Inactivity Watchdog: cleanly disconnect after 3 minutes (180s) of silence
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.activityMu.Lock()
+				idleDuration := time.Since(s.lastTurnTime)
+				speaking := s.isAiSpeaking
+				busy := s.isProcessingTurn
+				s.activityMu.Unlock()
+
+				if idleDuration > 180*time.Second && !speaking && !busy {
+					log.Printf("[RollingSession] ⏰ 3 minutes of inactivity detected. Disconnecting call to preserve resources.")
+					_ = s.clientWS.WriteJSON(ClientOutMessage{
+						Type:    "error",
+						Message: "Call ended automatically due to 3 minutes of inactivity.",
+					})
+					_ = s.clientWS.Close()
+					return
+				}
+			}
+		}
+	}()
+
 	// 5. Client -> Gemini loop (blocks until client disconnects)
 	for {
 		select {

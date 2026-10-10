@@ -7,10 +7,28 @@ import (
 )
 
 type Config struct {
-	Port            string
-	DBPath          string
-	GeminiAPIKey    string
-	GeminiLiveModel string
+	Port               string
+	DBPath             string
+	GeminiAPIKey       string
+	GeminiLiveModel    string
+	AdminEmails        []string
+	GoogleClientID     string
+	GoogleClientSecret string
+	AppURL             string
+	SessionSecret      string
+}
+
+func (c *Config) IsAdminEmail(email string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false
+	}
+	for _, admin := range c.AdminEmails {
+		if strings.ToLower(strings.TrimSpace(admin)) == email {
+			return true
+		}
+	}
+	return false
 }
 
 // loadEnvFile reads a .env file and loads environment variables if not already set
@@ -66,10 +84,44 @@ func LoadConfig() *Config {
 		liveModel = "auto"
 	}
 
+	adminEnv := os.Getenv("ADMIN_EMAILS")
+	if adminEnv == "" {
+		adminEnv = os.Getenv("ADMIN_EMAIL")
+	}
+	var adminEmails []string
+	if adminEnv != "" {
+		parts := strings.Split(adminEnv, ",")
+		for _, p := range parts {
+			trimmed := strings.ToLower(strings.TrimSpace(p))
+			if trimmed != "" {
+				adminEmails = append(adminEmails, trimmed)
+			}
+		}
+	}
+
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+
+	appURL := os.Getenv("APP_URL")
+	if appURL == "" {
+		appURL = "http://localhost:" + port
+	}
+	appURL = strings.TrimSuffix(appURL, "/")
+
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		sessionSecret = "antigravity-english-teacher-session-secret"
+	}
+
 	return &Config{
-		Port:            port,
-		DBPath:          dbPath,
-		GeminiAPIKey:    apiKey,
-		GeminiLiveModel: liveModel,
+		Port:               port,
+		DBPath:             dbPath,
+		GeminiAPIKey:       apiKey,
+		GeminiLiveModel:    liveModel,
+		AdminEmails:        adminEmails,
+		GoogleClientID:     googleClientID,
+		GoogleClientSecret: googleClientSecret,
+		AppURL:             appURL,
+		SessionSecret:      sessionSecret,
 	}
 }

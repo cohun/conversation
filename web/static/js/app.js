@@ -3,6 +3,9 @@
 document.addEventListener('DOMContentLoaded', () => {
   const App = {
     profile: null,
+    currentUser: null,
+    authMode: 'login', // 'login' or 'register'
+    adminUsers: [],
     personas: [],
     topics: [],
     settings: null,
@@ -11,12 +14,14 @@ document.addEventListener('DOMContentLoaded', () => {
     micTestStream: null,
     micTestCtx: null,
 
-    init() {
+    async init() {
       this.bindEvents();
-      this.loadAll();
+      this.checkURLParams();
+      await this.loadAll();
     },
 
     async loadAll() {
+      await this.fetchMe();
       await Promise.all([
         this.fetchProfile(),
         this.fetchPersonas(),
@@ -36,7 +41,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Header actions & Handshake edit
       document.getElementById('profileBtn').addEventListener('click', () => this.openModal('profileModal'));
-      document.getElementById('handshakeEditBtn').addEventListener('click', () => this.openModal('profileModal'));
+      document.getElementById('handshakeEditBtn').addEventListener('click', () => {
+        if (!this.currentUser) {
+          this.openAuthModal('login');
+        } else {
+          this.openModal('profileModal');
+        }
+      });
+
+      const loginTriggerBtn = document.getElementById('loginTriggerBtn');
+      if (loginTriggerBtn) {
+        loginTriggerBtn.addEventListener('click', () => this.openAuthModal('login'));
+      }
+
+      const adminBtn = document.getElementById('adminBtn');
+      if (adminBtn) {
+        adminBtn.addEventListener('click', () => this.openAdminDashboard());
+      }
+
       const settingsBtn = document.getElementById('settingsBtn');
       if (settingsBtn) {
         settingsBtn.addEventListener('click', () => this.openModal('settingsModal'));
@@ -59,6 +81,40 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         });
       });
+
+      // Auth Modal events
+      const authTabLogin = document.getElementById('authTabLogin');
+      const authTabRegister = document.getElementById('authTabRegister');
+      if (authTabLogin) authTabLogin.addEventListener('click', () => this.setAuthMode('login'));
+      if (authTabRegister) authTabRegister.addEventListener('click', () => this.setAuthMode('register'));
+
+      const authSubmitBtn = document.getElementById('authSubmitBtn');
+      if (authSubmitBtn) authSubmitBtn.addEventListener('click', () => this.submitAuthForm());
+
+      const authForm = document.getElementById('authForm');
+      if (authForm) {
+        authForm.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            this.submitAuthForm();
+          }
+        });
+      }
+
+      // Logout event
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
+
+      // BYOK Custom Key events
+      const saveCustomKeyBtn = document.getElementById('saveCustomKeyBtn');
+      if (saveCustomKeyBtn) saveCustomKeyBtn.addEventListener('click', () => this.saveCustomKey());
+
+      const removeCustomKeyBtn = document.getElementById('removeCustomKeyBtn');
+      if (removeCustomKeyBtn) removeCustomKeyBtn.addEventListener('click', () => this.removeCustomKey());
+
+      // Admin Dashboard events
+      const adminRefreshBtn = document.getElementById('adminRefreshBtn');
+      if (adminRefreshBtn) adminRefreshBtn.addEventListener('click', () => this.fetchAdminUsers());
 
       // Profile Save
       document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
@@ -105,6 +161,17 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       document.getElementById('tabTopics').classList.toggle('active', tabName === 'topics');
     },
 
+    checkURLParams() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('auth_error')) {
+        const err = params.get('auth_error');
+        alert('Bejelentkezési hiba: ' + err);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (params.get('auth_success')) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    },
+
     openModal(id) {
       const modal = document.getElementById(id);
       if (modal) {
@@ -119,6 +186,336 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       }
       if (id === 'profileModal' && this.micTestStream) {
         this.stopMicTest();
+      }
+    },
+
+    // --- Authentication (Login & Register) ---
+    openAuthModal(mode = 'login') {
+      this.setAuthMode(mode);
+      this.openModal('authModal');
+    },
+
+    setAuthMode(mode) {
+      this.authMode = mode;
+      const tabLogin = document.getElementById('authTabLogin');
+      const tabRegister = document.getElementById('authTabRegister');
+      const nameGroup = document.getElementById('authNameGroup');
+      const title = document.getElementById('authModalTitle');
+      const submitBtn = document.getElementById('authSubmitBtn');
+      const errorBox = document.getElementById('authErrorMsg');
+
+      if (errorBox) {
+        errorBox.style.display = 'none';
+        errorBox.textContent = '';
+      }
+
+      if (mode === 'register') {
+        if (tabLogin) tabLogin.classList.remove('active');
+        if (tabRegister) tabRegister.classList.add('active');
+        if (nameGroup) nameGroup.style.display = 'flex';
+        if (title) title.textContent = 'Új Regisztráció';
+        if (submitBtn) submitBtn.textContent = 'Fiók létrehozása';
+      } else {
+        if (tabLogin) tabLogin.classList.add('active');
+        if (tabRegister) tabRegister.classList.remove('active');
+        if (nameGroup) nameGroup.style.display = 'none';
+        if (title) title.textContent = 'Bejelentkezés';
+        if (submitBtn) submitBtn.textContent = 'Bejelentkezés';
+      }
+    },
+
+    async submitAuthForm() {
+      const emailInput = document.getElementById('authEmailInput');
+      const passInput = document.getElementById('authPasswordInput');
+      const nameInput = document.getElementById('authNameInput');
+      const errorBox = document.getElementById('authErrorMsg');
+
+      const email = emailInput ? emailInput.value.trim() : '';
+      const password = passInput ? passInput.value : '';
+      const name = nameInput ? nameInput.value.trim() : '';
+
+      if (!email || !password) {
+        if (errorBox) {
+          errorBox.textContent = 'Kérlek add meg az email címedet és a jelszavadat.';
+          errorBox.style.display = 'block';
+        }
+        return;
+      }
+
+      if (this.authMode === 'register' && password.length < 6) {
+        if (errorBox) {
+          errorBox.textContent = 'A jelszónak legalább 6 karakter hosszúnak kell lennie.';
+          errorBox.style.display = 'block';
+        }
+        return;
+      }
+
+      const submitBtn = document.getElementById('authSubmitBtn');
+      const originalText = submitBtn ? submitBtn.textContent : '';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Kapcsolódás...';
+      }
+
+      try {
+        const endpoint = this.authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+        const payload = { email, password };
+        if (this.authMode === 'register') {
+          payload.name = name || email.split('@')[0];
+        }
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Azonosítási hiba történt');
+        }
+
+        this.closeModal('authModal');
+        await this.loadAll();
+      } catch (err) {
+        if (errorBox) {
+          errorBox.textContent = err.message;
+          errorBox.style.display = 'block';
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = originalText;
+        }
+      }
+    },
+
+    async logout() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        this.currentUser = null;
+        this.closeModal('profileModal');
+        await this.loadAll();
+      } catch (err) {
+        console.error('Logout error:', err);
+      }
+    },
+
+    // --- User State & Quota UI ---
+    async fetchMe() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.authenticated && data.user) {
+          this.currentUser = data.user;
+        } else {
+          this.currentUser = null;
+        }
+        this.renderUserUI();
+      } catch (err) {
+        console.error('Failed to fetch user state:', err);
+        this.currentUser = null;
+        this.renderUserUI();
+      }
+    },
+
+    renderUserUI() {
+      const loginTriggerBtn = document.getElementById('loginTriggerBtn');
+      const profileBtn = document.getElementById('profileBtn');
+      const adminBtn = document.getElementById('adminBtn');
+      const statusAlert = document.getElementById('accountStatusAlert');
+      const userQuotaPill = document.getElementById('userQuotaPill');
+
+      if (this.currentUser) {
+        if (loginTriggerBtn) loginTriggerBtn.style.display = 'none';
+        if (profileBtn) profileBtn.style.display = 'inline-flex';
+
+        // Admin badge button in header
+        if (adminBtn) {
+          adminBtn.style.display = this.currentUser.role === 'admin' ? 'inline-flex' : 'none';
+        }
+
+        // Display name & avatar initial
+        const name = this.currentUser.display_name || this.currentUser.name || this.currentUser.email.split('@')[0];
+        const initial = name.trim().charAt(0).toUpperCase();
+        document.getElementById('userDisplayName').textContent = `Hello, ${this.escapeHtml(name)} 👋`;
+        document.getElementById('userAvatarBadge').textContent = initial;
+
+        const phonetic = this.currentUser.phonetic_note || `Pronounced: ${name}`;
+        document.getElementById('userPhoneticHint').textContent = phonetic;
+
+        // Quota pill in banner
+        if (userQuotaPill) {
+          if (this.currentUser.role === 'admin') {
+            userQuotaPill.textContent = '👑 Korlátlan (Admin)';
+            userQuotaPill.className = 'user-quota-pill unlimited';
+          } else if (this.currentUser.has_custom_key) {
+            userQuotaPill.textContent = '🔑 Korlátlan (BYOK)';
+            userQuotaPill.className = 'user-quota-pill unlimited';
+          } else {
+            const used = Math.round(this.currentUser.today_used_minutes || 0);
+            const limit = this.currentUser.today_limit_minutes || 45;
+            userQuotaPill.textContent = `⏱️ ${used} / ${limit} perc`;
+            userQuotaPill.className = used >= limit ? 'user-quota-pill exceeded' : 'user-quota-pill';
+          }
+        }
+
+        // Account status banner (pending or blocked)
+        if (statusAlert) {
+          if (this.currentUser.status === 'pending') {
+            statusAlert.textContent = '⏳ A fiókod rendszergazdai jóváhagyásra vár. A hívás indításához az admin jóváhagyása szükséges.';
+            statusAlert.className = 'account-status-alert pending';
+            statusAlert.style.display = 'block';
+          } else if (this.currentUser.status === 'blocked') {
+            statusAlert.textContent = '🚫 A hozzáférésedet a rendszergazda felfüggesztette.';
+            statusAlert.className = 'account-status-alert blocked';
+            statusAlert.style.display = 'block';
+          } else {
+            statusAlert.style.display = 'none';
+          }
+        }
+
+        // Populate Profile Modal details
+        const emailEl = document.getElementById('profileEmailDisplay');
+        if (emailEl) emailEl.textContent = this.currentUser.email;
+
+        const roleBadge = document.getElementById('profileRoleBadge');
+        if (roleBadge) {
+          roleBadge.textContent = this.currentUser.role === 'admin' ? '👑 Rendszergazda' : 'Tanuló';
+          roleBadge.className = this.currentUser.role === 'admin' ? 'profile-role-badge admin' : 'profile-role-badge';
+        }
+
+        const statusBadge = document.getElementById('profileStatusBadge');
+        if (statusBadge) {
+          const statusMap = { active: 'Aktív', pending: 'Jóváhagyásra vár', blocked: 'Felfüggesztve' };
+          statusBadge.textContent = statusMap[this.currentUser.status] || this.currentUser.status;
+          statusBadge.className = `profile-status-badge ${this.currentUser.status}`;
+        }
+
+        const quotaText = document.getElementById('profileQuotaText');
+        const quotaBar = document.getElementById('profileQuotaBar');
+        const quotaHint = document.getElementById('profileQuotaHint');
+
+        if (this.currentUser.role === 'admin') {
+          if (quotaText) quotaText.textContent = 'Adminisztrátor (Korlátlan)';
+          if (quotaBar) quotaBar.style.width = '100%';
+          if (quotaHint) quotaHint.textContent = 'Rendszergazdaként korlátlan beszédidővel rendelkezel.';
+        } else if (this.currentUser.has_custom_key) {
+          if (quotaText) quotaText.textContent = 'Saját kulcs aktív (Korlátlan)';
+          if (quotaBar) quotaBar.style.width = '100%';
+          if (quotaHint) quotaHint.textContent = 'A saját Google AI Studio kulcsodat használod, a hívásaid korlátlanok.';
+        } else {
+          const used = Math.round(this.currentUser.today_used_minutes || 0);
+          const limit = this.currentUser.today_limit_minutes || 45;
+          const pct = Math.min(100, Math.round((used / limit) * 100));
+          if (quotaText) quotaText.textContent = `${used} / ${limit} perc (${pct}%)`;
+          if (quotaBar) quotaBar.style.width = `${pct}%`;
+          if (quotaHint) {
+            quotaHint.textContent = used >= limit
+              ? '⚠️ A mai központi kereted elfogyott! Állíts be saját ingyenes Google kulcsot alább a folytatáshoz.'
+              : 'A központi keret minden éjfélkor automatikusan újraindul.';
+          }
+        }
+
+        // BYOK custom key status
+        const customBadge = document.getElementById('customKeyBadge');
+        const removeKeyBtn = document.getElementById('removeCustomKeyBtn');
+        const keyInput = document.getElementById('customKeyInput');
+        if (this.currentUser.has_custom_key) {
+          if (customBadge) {
+            customBadge.textContent = `✅ Aktív (${this.currentUser.masked_custom_key})`;
+            customBadge.className = 'byok-status-pill active';
+          }
+          if (removeKeyBtn) removeKeyBtn.style.display = 'inline-flex';
+          if (keyInput) keyInput.placeholder = 'Új kulcs megadása a cseréhez...';
+        } else {
+          if (customBadge) {
+            customBadge.textContent = 'Nincs egyéni kulcs';
+            customBadge.className = 'byok-status-pill none';
+          }
+          if (removeKeyBtn) removeKeyBtn.style.display = 'none';
+          if (keyInput) keyInput.placeholder = 'AIzaSy...';
+        }
+
+      } else {
+        // Unauthenticated
+        if (loginTriggerBtn) loginTriggerBtn.style.display = 'inline-flex';
+        if (profileBtn) profileBtn.style.display = 'none';
+        if (adminBtn) adminBtn.style.display = 'none';
+        if (statusAlert) statusAlert.style.display = 'none';
+
+        document.getElementById('userDisplayName').textContent = 'Vendég 👋';
+        document.getElementById('userAvatarBadge').textContent = 'V';
+        document.getElementById('userPhoneticHint').textContent = 'Kattints a Belépés gombra a beszélgetéshez';
+        if (userQuotaPill) {
+          userQuotaPill.textContent = 'Belépés szükséges';
+          userQuotaPill.className = 'user-quota-pill';
+        }
+      }
+    },
+
+    // --- BYOK (Bring Your Own Key) ---
+    async saveCustomKey() {
+      const keyInput = document.getElementById('customKeyInput');
+      const key = keyInput ? keyInput.value.trim() : '';
+      const errorHint = document.getElementById('customKeyError');
+      const saveBtn = document.getElementById('saveCustomKeyBtn');
+
+      if (!key) {
+        alert('Kérlek illeszd be a Google Gemini API kulcsodat!');
+        return;
+      }
+
+      if (errorHint) errorHint.style.display = 'none';
+      const origText = saveBtn ? saveBtn.textContent : '';
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Ellenőrzés Google AI Studio-val...';
+      }
+
+      try {
+        const res = await fetch('/api/user/custom-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'A Google API elutasította a megadott kulcsot.');
+        }
+
+        alert('✅ Saját Google API kulcs sikeresen ellenőrizve és aktiválva!\n\nMostantól korlátlanul beszélgethetsz a saját kulcsoddal.');
+        if (keyInput) keyInput.value = '';
+        await this.fetchMe();
+      } catch (err) {
+        if (errorHint) {
+          errorHint.textContent = '❌ ' + err.message;
+          errorHint.style.display = 'block';
+        } else {
+          alert('Hiba: ' + err.message);
+        }
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = origText;
+        }
+      }
+    },
+
+    async removeCustomKey() {
+      if (!confirm('Biztosan törlöd a saját API kulcsodat?\n\nEzután újra a központi napi kvóta (45 perc) lesz érvényes a fiókodra.')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/user/custom-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: '' }),
+        });
+        if (!res.ok) throw new Error('Nem sikerült törölni a kulcsot');
+        await this.fetchMe();
+      } catch (err) {
+        alert('Hiba a kulcs törlése során: ' + err.message);
       }
     },
 
@@ -137,12 +534,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
     renderProfile() {
       if (!this.profile) return;
       const name = this.profile.display_name || 'Alex';
-      const initial = name.trim().charAt(0).toUpperCase();
       const phonetic = this.profile.phonetic_note || `Pronounced: ${name}`;
 
-      document.getElementById('userDisplayName').textContent = `Hello, ${name} 👋`;
-      document.getElementById('userAvatarBadge').textContent = initial;
-      document.getElementById('userPhoneticHint').textContent = phonetic;
+      if (!this.currentUser) {
+        document.getElementById('userDisplayName').textContent = `Hello, ${this.escapeHtml(name)} 👋`;
+        document.getElementById('userAvatarBadge').textContent = name.trim().charAt(0).toUpperCase();
+        document.getElementById('userPhoneticHint').textContent = phonetic;
+      }
 
       document.getElementById('profileNameInput').value = name;
       document.getElementById('profilePhoneticInput').value = this.profile.phonetic_note || '';
@@ -168,6 +566,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         if (!res.ok) throw new Error('Failed to save profile');
         this.profile = await res.json();
         this.renderProfile();
+        await this.fetchMe();
         this.closeModal('profileModal');
       } catch (err) {
         alert('Error saving profile: ' + err.message);
@@ -486,12 +885,219 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
     },
 
     // ==========================================
+    // Admin Dashboard Handlers
+    // ==========================================
+    async openAdminDashboard() {
+      this.openModal('adminModal');
+      await this.fetchAdminUsers();
+    },
+
+    async fetchAdminUsers() {
+      const refreshBtn = document.getElementById('adminRefreshBtn');
+      if (refreshBtn) refreshBtn.style.opacity = '0.6';
+
+      try {
+        const res = await fetch('/api/admin/users');
+        if (!res.ok) {
+          throw new Error('Jogosulatlan hozzáférés vagy admin hiba');
+        }
+        this.adminUsers = await res.json();
+        this.renderAdminUsers();
+      } catch (err) {
+        console.error('Failed to fetch admin users:', err);
+        alert('Admin hiba: ' + err.message);
+      } finally {
+        if (refreshBtn) refreshBtn.style.opacity = '1';
+      }
+    },
+
+    renderAdminUsers() {
+      const users = this.adminUsers || [];
+      const totalUsers = users.length;
+      let totalTodaySec = 0;
+      let totalDurationSec = 0;
+      let totalCostUSD = 0.0;
+
+      users.forEach((u) => {
+        totalTodaySec += u.today_duration_sec || 0;
+        totalDurationSec += u.total_duration_sec || 0;
+        totalCostUSD += u.total_cost_usd || 0.0;
+      });
+
+      const statTotalUsers = document.getElementById('adminStatTotalUsers');
+      const statTodayDuration = document.getElementById('adminStatTodayDuration');
+      const statTotalDuration = document.getElementById('adminStatTotalDuration');
+      const statTotalCost = document.getElementById('adminStatTotalCost');
+
+      if (statTotalUsers) statTotalUsers.textContent = totalUsers;
+      if (statTodayDuration) statTodayDuration.textContent = `${Math.round(totalTodaySec / 60)} perc`;
+      const totalMin = Math.round(totalDurationSec / 60);
+      const totalHours = (totalMin / 60).toFixed(1);
+      if (statTotalDuration) statTotalDuration.textContent = `${totalMin} p (~${totalHours} óra)`;
+      if (statTotalCost) statTotalCost.textContent = `$${totalCostUSD.toFixed(2)}`;
+
+      const tbody = document.getElementById('adminUsersTableBody');
+      if (!tbody) return;
+
+      if (users.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Nincsenek még regisztrált felhasználók.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = users
+        .map((u) => {
+          const isPrimaryAdmin = u.email === 'attila.hitb@gmail.com' || u.email === 'attila.private@gmail.com';
+          const authBadge = u.auth_provider === 'google' ? '🌐 Google' : '🔑 Email';
+          const todayMin = Math.round((u.today_duration_sec || 0) / 60);
+          const totalUserMin = Math.round((u.total_duration_sec || 0) / 60);
+          const costStr = `$${(u.total_cost_usd || 0).toFixed(2)}`;
+          const byokBadge = u.custom_api_key
+            ? `<span class="badge-byok yes" title="Saját Google AI Studio kulcs, neked $0 költség!">Saját kulcs ($0)</span>`
+            : `<span class="badge-byok no">Központi keret</span>`;
+
+          const statusOptions = ['active', 'pending', 'blocked']
+            .map(
+              (s) =>
+                `<option value="${s}" ${u.status === s ? 'selected' : ''}>${s.toUpperCase()}</option>`
+            )
+            .join('');
+
+          const deleteBtn = !isPrimaryAdmin
+            ? `<button class="admin-del-btn" onclick="App.adminDeleteUser('${u.id}', '${this.escapeHtml(u.email)}')" title="Felhasználó törlése">
+                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+               </button>`
+            : '<span style="font-size: 0.72rem; color: var(--text-muted);">Fő Admin</span>';
+
+          return `
+            <tr>
+              <td>
+                <div style="font-weight: 700; color: var(--text-primary);">${this.escapeHtml(u.display_name || u.email)}</div>
+                <div class="user-email-sub">${this.escapeHtml(u.email)} • ${authBadge}</div>
+              </td>
+              <td>
+                <select class="admin-select" ${isPrimaryAdmin ? 'disabled' : ''} onchange="App.adminUpdateStatus('${u.id}', this.value)">
+                  ${statusOptions}
+                </select>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <input type="number" min="5" max="1440" step="5" class="admin-limit-input" value="${u.daily_limit_minutes || 45}" onchange="App.adminUpdateLimit('${u.id}', this.value)">
+                  <span style="font-size: 0.75rem; color: var(--text-muted);">perc</span>
+                </div>
+              </td>
+              <td>${byokBadge}</td>
+              <td><strong>${todayMin}</strong> perc</td>
+              <td>
+                <div>${totalUserMin} perc</div>
+                <div style="font-size: 0.72rem; color: var(--sage-600); font-weight: 600;">${costStr}</div>
+              </td>
+              <td>${deleteBtn}</td>
+            </tr>
+          `;
+        })
+        .join('');
+    },
+
+    async adminUpdateStatus(userId, newStatus) {
+      try {
+        const res = await fetch('/api/admin/users/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, status: newStatus }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Sikertelen státuszmódosítás');
+        }
+        await this.fetchAdminUsers();
+      } catch (e) {
+        alert('Hiba: ' + e.message);
+        await this.fetchAdminUsers();
+      }
+    },
+
+    async adminUpdateLimit(userId, limitMinutes) {
+      const minutes = parseInt(limitMinutes, 10);
+      if (isNaN(minutes) || minutes < 5 || minutes > 1440) {
+        alert('A napi limitnek 5 és 1440 perc között kell lennie.');
+        return;
+      }
+      try {
+        const res = await fetch('/api/admin/users/limit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, limit_minutes: minutes }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Sikertelen limit módosítás');
+        }
+      } catch (e) {
+        alert('Hiba: ' + e.message);
+        await this.fetchAdminUsers();
+      }
+    },
+
+    async adminDeleteUser(userId, email) {
+      if (!confirm(`Biztosan törölni szeretnéd a(z) ${email} felhasználót és összes korábbi hívásnaplóját?`)) {
+        return;
+      }
+      try {
+        const res = await fetch(`/api/admin/users?user_id=${encodeURIComponent(userId)}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Sikertelen törlés');
+        }
+        await this.fetchAdminUsers();
+      } catch (e) {
+        alert('Hiba a törlés során: ' + e.message);
+      }
+    },
+
+    // ==========================================
     // Active Phone Call Logic
     // ==========================================
     async startCall(personaId, resumeId = '') {
-      // Check if API key is present
-      if (this.settings && !this.settings.has_api_key) {
-        const entered = prompt('Please enter your Gemini API Key to start voice calls:');
+      // 1. Guard: Check Authentication
+      if (!this.currentUser) {
+        this.openAuthModal('login');
+        const errorBox = document.getElementById('authErrorMsg');
+        if (errorBox) {
+          errorBox.textContent = 'A beszélgetés indításához kérlek jelentkezz be Google-fiókoddal vagy regisztrálj!';
+          errorBox.style.display = 'block';
+        }
+        return;
+      }
+
+      // 2. Guard: Check User Status
+      if (this.currentUser.status === 'pending') {
+        alert('⏳ A fiókod rendszergazdai jóváhagyásra vár.\n\nAmint az admin jóváhagyja, azonnal beszélgethetsz!');
+        return;
+      }
+      if (this.currentUser.status === 'blocked') {
+        alert('🚫 A fiókod hozzáférését az adminisztrátor felfüggesztette.');
+        return;
+      }
+
+      // 3. Guard: Daily Quota Check (unless Admin or BYOK)
+      if (
+        this.currentUser.role !== 'admin' &&
+        !this.currentUser.has_custom_key &&
+        this.currentUser.today_used_minutes >= this.currentUser.today_limit_minutes
+      ) {
+        alert(
+          '⏱️ A mai ingyenes beszédkereted (' + this.currentUser.today_limit_minutes + ' perc) elfogyott!\n\n' +
+          'A folytatáshoz nyisd meg a Profil menüt, és add meg a saját ingyenes Google AI Studio API kulcsodat (BYOK) a korlátlan beszélgetéshez!'
+        );
+        this.openModal('profileModal');
+        return;
+      }
+
+      // Check if server or user has an API key configured
+      if (this.settings && !this.settings.has_api_key && !this.currentUser.has_custom_key) {
+        const entered = prompt('Kérlek add meg a Gemini API kulcsodat a hívás indításához:');
         if (!entered) return;
         await fetch('/api/settings', {
           method: 'POST',
@@ -546,6 +1152,8 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
         onCallEnded: () => {
           overlay.classList.remove('active');
           this.currentCall = null;
+          // Refresh quota and user stats after call ends
+          this.fetchMe();
         },
       });
 

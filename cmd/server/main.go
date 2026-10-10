@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"english-teacher-app/internal/auth"
 	"english-teacher-app/internal/config"
 	"english-teacher-app/internal/db"
 	"english-teacher-app/internal/gemini"
@@ -36,6 +37,14 @@ func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
 	jsonResponse(w, status, map[string]string{"error": msg})
+}
+
+func getEffectiveUserID(r *http.Request, authHandler *auth.Handler) string {
+	user := authHandler.GetUserFromRequest(r)
+	if user != nil {
+		return user.ID
+	}
+	return "default_user"
 }
 
 func findStaticDir() string {
@@ -64,6 +73,16 @@ func main() {
 	defer database.Close()
 
 	resolver := gemini.NewModelResolver(database, cfg.GeminiLiveModel)
+	authHandler := auth.NewHandler(cfg, database, resolver)
+
+	// Bootstrap configured admin accounts
+	if len(cfg.AdminEmails) > 0 {
+		if err := database.EnsureAdminEmails(cfg.AdminEmails); err != nil {
+			log.Printf("[Server] Notice: EnsureAdminEmails error: %v", err)
+		} else {
+			log.Printf("[Server] ✅ Admin accounts configured for: %v", cfg.AdminEmails)
+		}
+	}
 
 	// Effective API key
 	effectiveAPIKey := cfg.GeminiAPIKey
@@ -84,21 +103,36 @@ func main() {
 		}()
 	}
 
-	hub := ws.NewHub(cfg, database, resolver)
+	hub := ws.NewHub(cfg, database, resolver, authHandler)
 
 	mux := http.NewServeMux()
 
 	// WebSocket Live Endpoint
 	mux.HandleFunc("/ws/live", hub.HandleLiveWS)
 
+	// Auth Endpoints
+	mux.HandleFunc("POST /api/auth/register", authHandler.HandleRegister)
+	mux.HandleFunc("POST /api/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("POST /api/auth/logout", authHandler.HandleLogout)
+	mux.HandleFunc("GET /api/auth/me", authHandler.HandleGetMe)
+	mux.HandleFunc("GET /api/auth/google/login", authHandler.HandleGoogleLogin)
+	mux.HandleFunc("GET /api/auth/google/callback", authHandler.HandleGoogleCallback)
+	mux.HandleFunc("POST /api/user/custom-key", authHandler.HandleSetCustomKey)
+
+	// Admin Endpoints
+	mux.HandleFunc("GET /api/admin/users", authHandler.RequireAdmin(authHandler.HandleAdminListUsers))
+	mux.HandleFunc("POST /api/admin/users/status", authHandler.RequireAdmin(authHandler.HandleAdminUpdateUserStatus))
+	mux.HandleFunc("POST /api/admin/users/limit", authHandler.RequireAdmin(authHandler.HandleAdminUpdateUserLimit))
+	mux.HandleFunc("DELETE /api/admin/users", authHandler.RequireAdmin(authHandler.HandleAdminDeleteUser))
+
 	// REST API: User Profile
 	mux.HandleFunc("GET /api/profile", func(w http.ResponseWriter, r *http.Request) {
-		p, err := database.GetUserProfile("default_user")
+		userID := getEffectiveUserID(r, authHandler)
+		p, err := database.GetUserProfile(userID)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to load profile: "+err.Error())
 			return
 		}
-		// Return both wrapped and root fields for maximal client compatibility
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"profile":       p,
 			"id":            p.ID,
@@ -110,6 +144,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/profile", func(w http.ResponseWriter, r *http.Request) {
+		userID := getEffectiveUserID(r, authHandler)
 		var req struct {
 			DisplayName  string `json:"display_name"`
 			PhoneticNote string `json:"phonetic_note"`
@@ -123,12 +158,12 @@ func main() {
 			return
 		}
 
-		if err := database.UpdateUserProfile("default_user", req.DisplayName, req.PhoneticNote); err != nil {
+		if err := database.UpdateUserProfile(userID, req.DisplayName, req.PhoneticNote); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to update profile: "+err.Error())
 			return
 		}
 
-		p, err := database.GetUserProfile("default_user")
+		p, err := database.GetUserProfile(userID)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to load profile: "+err.Error())
 			return
@@ -146,7 +181,8 @@ func main() {
 
 	// REST API: Personas
 	mux.HandleFunc("GET /api/personas", func(w http.ResponseWriter, r *http.Request) {
-		list, err := database.ListPersonas("default_user")
+		userID := getEffectiveUserID(r, authHandler)
+		list, err := database.ListPersonas(userID)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to list personas: "+err.Error())
 			return
@@ -155,6 +191,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/personas", func(w http.ResponseWriter, r *http.Request) {
+		userID := getEffectiveUserID(r, authHandler)
 		var p db.Persona
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			jsonError(w, http.StatusBadRequest, "Invalid JSON payload")
@@ -164,6 +201,7 @@ func main() {
 			jsonError(w, http.StatusBadRequest, "name and system_prompt are required")
 			return
 		}
+		p.UserID = userID
 		if p.Mode == "" {
 			p.Mode = "teacher"
 		}
@@ -196,7 +234,8 @@ func main() {
 
 	// REST API: Conversations
 	mux.HandleFunc("GET /api/conversations", func(w http.ResponseWriter, r *http.Request) {
-		list, err := database.ListConversations("default_user")
+		userID := getEffectiveUserID(r, authHandler)
+		list, err := database.ListConversations(userID)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to list conversations: "+err.Error())
 			return
@@ -205,6 +244,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/conversations", func(w http.ResponseWriter, r *http.Request) {
+		userID := getEffectiveUserID(r, authHandler)
 		var c db.SavedConversation
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 			jsonError(w, http.StatusBadRequest, "Invalid JSON payload")
@@ -214,6 +254,7 @@ func main() {
 			jsonError(w, http.StatusBadRequest, "topic_title is required")
 			return
 		}
+		c.UserID = userID
 		if err := database.SaveConversation(&c); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to save conversation: "+err.Error())
 			return

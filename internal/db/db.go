@@ -121,8 +121,41 @@ func (d *DB) migrate() error {
 		value TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		email TEXT UNIQUE NOT NULL,
+		password_hash TEXT,
+		auth_provider TEXT NOT NULL DEFAULT 'local',
+		google_sub TEXT,
+		role TEXT NOT NULL DEFAULT 'student',
+		status TEXT NOT NULL DEFAULT 'pending',
+		daily_limit_minutes INTEGER NOT NULL DEFAULT 45,
+		custom_api_key TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS sessions (
+		token TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		expires_at DATETIME NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS call_logs (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		persona_id TEXT NOT NULL,
+		started_at DATETIME NOT NULL,
+		ended_at DATETIME NOT NULL,
+		duration_seconds INTEGER NOT NULL DEFAULT 0,
+		used_custom_key BOOLEAN NOT NULL DEFAULT 0,
+		estimated_cost_usd REAL NOT NULL DEFAULT 0.0
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_personas_user_id ON personas(user_id);
 	CREATE INDEX IF NOT EXISTS idx_saved_conv_user_id ON saved_conversations(user_id);
+	CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+	CREATE INDEX IF NOT EXISTS idx_call_logs_user_id ON call_logs(user_id);
 	`
 	_, err := d.conn.Exec(schema)
 	return err
