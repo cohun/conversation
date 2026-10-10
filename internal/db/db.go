@@ -240,8 +240,8 @@ Keep your tone polished, warm, and empowering. If the user asks to save the topi
 			INSERT INTO personas (id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, avatar_icon)
 			VALUES 
 			('teacher-sarah', 'default_user', 'Sarah', 'Patient, supportive English teacher focused on gentle corrections and natural dialogue.', ?, 'Aoede', 'teacher', 1, 'sarah'),
-			('friend-fred', 'default_user', 'Fred', 'Easygoing conversation buddy for casual chats about daily life, travel, movies, and hobbies.', ?, 'Puck', 'free_chat', 0, 'fred'),
-			('coach-maya', 'default_user', 'Maya', 'Executive business English and interview coach focusing on professional clarity and vocabulary.', ?, 'Kore', 'teacher', 0, 'maya');
+			('friend-fred', 'default_user', 'Fred', 'Easygoing conversation buddy for casual chats about daily life, travel, movies, and hobbies.', ?, 'Puck', 'free_chat', 1, 'fred'),
+			('coach-maya', 'default_user', 'Maya', 'Executive business English and interview coach focusing on professional clarity and vocabulary.', ?, 'Kore', 'teacher', 1, 'maya');
 		`, sarahPrompt, fredPrompt, mayaPrompt)
 		if err != nil {
 			return err
@@ -256,6 +256,13 @@ Keep your tone polished, warm, and empowering. If the user asks to save the topi
 		    avatar_icon = 'fred', 
 		    system_prompt = REPLACE(system_prompt, 'You are Leo', 'You are Fred') 
 		WHERE id = 'friend-leo' OR name = 'Leo';
+	`)
+
+	// Automatic migration: ensure all 3 core companions (Sarah, Fred, Maya) are always default companions
+	_, _ = d.conn.Exec(`
+		UPDATE personas 
+		SET is_default = 1 
+		WHERE id IN ('teacher-sarah', 'friend-fred', 'coach-maya');
 	`)
 
 	return nil
@@ -370,6 +377,18 @@ func (d *DB) CreatePersona(p *Persona) error {
 		INSERT INTO personas (id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, avatar_icon)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, p.ID, p.UserID, p.Name, p.ShortDesc, p.SystemPrompt, p.VoiceName, p.Mode, p.IsDefault, p.AvatarIcon)
+	return err
+}
+
+func (d *DB) UpdatePersona(p *Persona) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.conn.Exec(`
+		UPDATE personas 
+		SET name = ?, short_desc = ?, system_prompt = ?, voice_name = ?, mode = ?
+		WHERE id = ?
+	`, p.Name, p.ShortDesc, p.SystemPrompt, p.VoiceName, p.Mode, p.ID)
 	return err
 }
 

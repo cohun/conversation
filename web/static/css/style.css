@@ -417,6 +417,33 @@ body {
   box-shadow: 0 6px 16px var(--sage-glow);
 }
 
+.persona-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.edit-persona-btn {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.edit-persona-btn:hover {
+  border-color: var(--sage-500);
+  color: var(--sage-600);
+  background: #ffffff;
+}
+
 .delete-persona-btn {
   background: transparent;
   border: none;
@@ -424,6 +451,9 @@ body {
   cursor: pointer;
   padding: 6px;
   border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: color 0.2s;
 }
 

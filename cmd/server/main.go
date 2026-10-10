@@ -216,6 +216,34 @@ func main() {
 		jsonResponse(w, http.StatusCreated, p)
 	})
 
+	mux.HandleFunc("PUT /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			id = strings.TrimPrefix(r.URL.Path, "/api/personas/")
+		}
+		var p db.Persona
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			jsonError(w, http.StatusBadRequest, "Invalid JSON payload")
+			return
+		}
+		p.ID = id
+		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.SystemPrompt) == "" {
+			jsonError(w, http.StatusBadRequest, "name and system_prompt are required")
+			return
+		}
+		if p.Mode == "" {
+			p.Mode = "teacher"
+		}
+		if p.VoiceName == "" {
+			p.VoiceName = "Aoede"
+		}
+		if err := database.UpdatePersona(&p); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Failed to update persona: "+err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, p)
+	})
+
 	mux.HandleFunc("DELETE /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {

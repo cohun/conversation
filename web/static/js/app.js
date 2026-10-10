@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     currentUser: null,
     authMode: 'login', // 'login' or 'register'
     adminUsers: [],
+    editingPersonaId: null,
     personas: [],
     topics: [],
     settings: null,
@@ -667,8 +668,8 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
           const modeClass = p.mode === 'teacher' ? 'teacher' : 'free_chat';
           const isDefaultClass = p.is_default ? 'is-default' : '';
           const deleteBtn = !p.is_default
-            ? `<button class="delete-persona-btn" onclick="App.deletePersona('${p.id}')" title="Delete Companion">
-                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            ? `<button class="delete-persona-btn" onclick="App.deletePersona('${p.id}')" title="Companion törlése">
+                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                </button>`
             : '';
 
@@ -686,7 +687,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
                 </div>
               </div>
               <div class="persona-footer">
-                <div>${deleteBtn}</div>
+                <div class="persona-card-actions">
+                  <button class="edit-persona-btn" onclick="App.openEditPersona('${p.id}')" title="Név és beállítások módosítása">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    <span>Módosítás</span>
+                  </button>
+                  ${deleteBtn}
+                </div>
                 <button class="call-btn" onclick="App.startCall('${p.id}')">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
@@ -708,6 +715,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
     },
 
     openNewPersonaModal() {
+      this.editingPersonaId = null;
+      const modal = document.getElementById('personaModal');
+      const title = modal ? modal.querySelector('.modal-title') : null;
+      if (title) title.textContent = 'Új Companion Létrehozása';
+      const saveBtn = document.getElementById('savePersonaBtn');
+      if (saveBtn) saveBtn.textContent = 'Létrehozás';
+
       document.getElementById('newPersonaName').value = '';
       document.getElementById('newPersonaDesc').value = '';
       document.getElementById('newPersonaMode').value = 'teacher';
@@ -720,6 +734,26 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       this.openModal('personaModal');
     },
 
+    openEditPersona(id) {
+      const p = this.personas.find((item) => item.id === id);
+      if (!p) return;
+
+      this.editingPersonaId = p.id;
+      const modal = document.getElementById('personaModal');
+      const title = modal ? modal.querySelector('.modal-title') : null;
+      if (title) title.textContent = `Módosítás: ${p.name}`;
+      const saveBtn = document.getElementById('savePersonaBtn');
+      if (saveBtn) saveBtn.textContent = 'Módosítások mentése';
+
+      document.getElementById('newPersonaName').value = p.name;
+      document.getElementById('newPersonaDesc').value = p.short_desc || '';
+      document.getElementById('newPersonaMode').value = p.mode || 'teacher';
+      document.getElementById('newPersonaVoice').value = p.voice_name || 'Aoede';
+      document.getElementById('newPersonaPrompt').value = p.system_prompt || '';
+
+      this.openModal('personaModal');
+    },
+
     async savePersona() {
       const name = document.getElementById('newPersonaName').value.trim();
       const shortDesc = document.getElementById('newPersonaDesc').value.trim();
@@ -728,27 +762,37 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       const systemPrompt = document.getElementById('newPersonaPrompt').value.trim();
 
       if (!name || !systemPrompt) {
-        alert('Please provide at least a name and system instructions.');
+        alert('Kérlek adj meg egy nevet és a companion utasításait.');
         return;
       }
 
+      const payload = {
+        name,
+        short_desc: shortDesc || 'Conversational companion',
+        mode,
+        voice_name: voiceName,
+        system_prompt: systemPrompt,
+      };
+
       try {
-        const res = await fetch('/api/personas', {
-          method: 'POST',
+        let endpoint = '/api/personas';
+        let method = 'POST';
+        if (this.editingPersonaId) {
+          endpoint = `/api/personas/${encodeURIComponent(this.editingPersonaId)}`;
+          method = 'PUT';
+        }
+
+        const res = await fetch(endpoint, {
+          method,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            short_desc: shortDesc || 'Conversational companion',
-            mode,
-            voice_name: voiceName,
-            system_prompt: systemPrompt,
-          }),
+          body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Failed to create persona');
+        if (!res.ok) throw new Error('Nem sikerült elmenteni a companion adatait.');
+        this.editingPersonaId = null;
         await this.fetchPersonas();
         this.closeModal('personaModal');
       } catch (err) {
-        alert('Error creating persona: ' + err.message);
+        alert('Hiba a mentés során: ' + err.message);
       }
     },
 
