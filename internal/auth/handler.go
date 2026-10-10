@@ -354,7 +354,7 @@ func (h *Handler) HandleGetMe(w http.ResponseWriter, r *http.Request) {
 // GET /api/auth/google/login
 func (h *Handler) HandleGoogleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.oauthConfig == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "Google login is not configured on this instance. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET or sign in with email and password.")
+		http.Redirect(w, r, "/?auth_error=google_oauth_not_configured", http.StatusTemporaryRedirect)
 		return
 	}
 

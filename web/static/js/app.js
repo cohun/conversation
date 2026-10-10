@@ -165,7 +165,16 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       const params = new URLSearchParams(window.location.search);
       if (params.get('auth_error')) {
         const err = params.get('auth_error');
-        alert('Bejelentkezési hiba: ' + err);
+        if (err === 'google_oauth_not_configured') {
+          this.openAuthModal('login');
+          const errorBox = document.getElementById('authErrorMsg');
+          if (errorBox) {
+            errorBox.innerHTML = `<strong>A Google bejelentkezés még nincs beállítva a szerveren.</strong><br>Kérlek regisztrálj vagy jelentkezz be alább az email címeddel!<br><small>Az <code>attila.hitb@gmail.com</code> és <code>attila.private@gmail.com</code> címek azonnal Rendszergazda jogot kapnak.</small>`;
+            errorBox.style.display = 'block';
+          }
+        } else {
+          alert('Bejelentkezési hiba: ' + err);
+        }
         window.history.replaceState({}, document.title, window.location.pathname);
       } else if (params.get('auth_success')) {
         window.history.replaceState({}, document.title, window.location.pathname);
