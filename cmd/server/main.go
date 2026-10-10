@@ -217,6 +217,7 @@ func main() {
 	})
 
 	mux.HandleFunc("PUT /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		userID := getEffectiveUserID(r, authHandler)
 		id := r.PathValue("id")
 		if id == "" {
 			id = strings.TrimPrefix(r.URL.Path, "/api/personas/")
@@ -237,11 +238,86 @@ func main() {
 		if p.VoiceName == "" {
 			p.VoiceName = "Aoede"
 		}
+
+		existing, err := database.GetPersona(id)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "Companion nem található")
+			return
+		}
+
+		if existing.IsDefault {
+			// This is a default companion (Sarah, Fred, Maya). Save as per-user override ONLY!
+			if err := database.SaveUserPersonaOverride(userID, id, p.Name, p.ShortDesc, p.SystemPrompt, p.VoiceName, p.Mode); err != nil {
+				jsonError(w, http.StatusInternalServerError, "Failed to save persona override: "+err.Error())
+				return
+			}
+			updated, err := database.GetPersonaForUser(id, userID)
+			if err != nil {
+				p.IsDefault = true
+				p.HasOverride = true
+				jsonResponse(w, http.StatusOK, p)
+				return
+			}
+			jsonResponse(w, http.StatusOK, updated)
+			return
+		}
+
+		// Custom persona: check ownership or admin
+		if existing.UserID != userID && existing.UserID != "default_user" {
+			user := authHandler.GetUserFromRequest(r)
+			if user == nil || user.Role != "admin" {
+				jsonError(w, http.StatusForbidden, "Nincs jogosultságod más felhasználó companion-jának szerkesztésére")
+				return
+			}
+		}
+
 		if err := database.UpdatePersona(&p); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to update persona: "+err.Error())
 			return
 		}
 		jsonResponse(w, http.StatusOK, p)
+	})
+
+	mux.HandleFunc("POST /api/personas/{id}/reset", func(w http.ResponseWriter, r *http.Request) {
+		userID := getEffectiveUserID(r, authHandler)
+		id := r.PathValue("id")
+		if id == "" {
+			id = strings.TrimPrefix(r.URL.Path, "/api/personas/")
+			id = strings.TrimSuffix(id, "/reset")
+		}
+		if id == "" {
+			jsonError(w, http.StatusBadRequest, "persona id is required")
+			return
+		}
+
+		if err := database.ResetUserPersonaOverride(userID, id); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Nem sikerült visszaállítani az alapbeállításokat: "+err.Error())
+			return
+		}
+
+		fresh, err := database.GetPersonaForUser(id, userID)
+		if err != nil {
+			fresh, _ = database.GetDefaultPersonaTemplate(id)
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"status":  "ok",
+			"message": "Companion alapbeállításai sikeresen visszaállítva!",
+			"persona": fresh,
+		})
+	})
+
+	mux.HandleFunc("GET /api/personas/{id}/template", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			id = strings.TrimPrefix(r.URL.Path, "/api/personas/")
+			id = strings.TrimSuffix(id, "/template")
+		}
+		tpl, err := database.GetDefaultPersonaTemplate(id)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, "Companion default template not found")
+			return
+		}
+		jsonResponse(w, http.StatusOK, tpl)
 	})
 
 	mux.HandleFunc("DELETE /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {

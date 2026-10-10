@@ -143,6 +143,18 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       // Persona Save
       document.getElementById('savePersonaBtn').addEventListener('click', () => this.savePersona());
 
+      // Persona Modal Reset to Default
+      const resetModalBtn = document.getElementById('resetPersonaModalBtn');
+      if (resetModalBtn) {
+        resetModalBtn.addEventListener('click', () => {
+          if (this.editingPersonaId) {
+            const p = this.personas.find((item) => item.id === this.editingPersonaId);
+            const name = p ? p.name : 'Companion';
+            this.resetPersona(this.editingPersonaId, name);
+          }
+        });
+      }
+
       // Settings Save
       document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
 
@@ -667,6 +679,15 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
           const modeLabel = p.mode === 'teacher' ? '3-Phase Teacher' : 'Free Chat';
           const modeClass = p.mode === 'teacher' ? 'teacher' : 'free_chat';
           const isDefaultClass = p.is_default ? 'is-default' : '';
+          const overrideBadge = (p.is_default && p.has_override)
+            ? '<span class="badge-override" title="Egyéni beállítások érvényben">✨ Egyéni</span>'
+            : '';
+          const resetBtn = (p.is_default && p.has_override)
+            ? `<button class="reset-persona-btn" onclick="App.resetPersona('${p.id}', '${this.escapeHtml(p.name)}')" title="Alapbeállítások visszaállítása">
+                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+                 <span>Alaphelyzet</span>
+               </button>`
+            : '';
           const deleteBtn = !p.is_default
             ? `<button class="delete-persona-btn" onclick="App.deletePersona('${p.id}')" title="Companion törlése">
                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
@@ -680,6 +701,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
                 <div class="persona-details">
                   <div class="persona-title-row">
                     <span class="persona-name">${this.escapeHtml(p.name)}</span>
+                    ${overrideBadge}
                     <span class="badge-mode ${modeClass}">${modeLabel}</span>
                     <span class="badge-voice">🎙️ ${this.escapeHtml(p.voice_name)}</span>
                   </div>
@@ -692,6 +714,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                     <span>Módosítás</span>
                   </button>
+                  ${resetBtn}
                   ${deleteBtn}
                 </div>
                 <button class="call-btn" onclick="App.startCall('${p.id}')">
@@ -722,6 +745,11 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       const saveBtn = document.getElementById('savePersonaBtn');
       if (saveBtn) saveBtn.textContent = 'Létrehozás';
 
+      const notice = document.getElementById('personaOverrideNotice');
+      if (notice) notice.style.display = 'none';
+      const resetModalBtn = document.getElementById('resetPersonaModalBtn');
+      if (resetModalBtn) resetModalBtn.style.display = 'none';
+
       document.getElementById('newPersonaName').value = '';
       document.getElementById('newPersonaDesc').value = '';
       document.getElementById('newPersonaMode').value = 'teacher';
@@ -744,6 +772,17 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       if (title) title.textContent = `Módosítás: ${p.name}`;
       const saveBtn = document.getElementById('savePersonaBtn');
       if (saveBtn) saveBtn.textContent = 'Módosítások mentése';
+
+      const notice = document.getElementById('personaOverrideNotice');
+      const resetModalBtn = document.getElementById('resetPersonaModalBtn');
+
+      if (p.is_default) {
+        if (notice) notice.style.display = 'flex';
+        if (resetModalBtn) resetModalBtn.style.display = p.has_override ? 'inline-flex' : 'none';
+      } else {
+        if (notice) notice.style.display = 'none';
+        if (resetModalBtn) resetModalBtn.style.display = 'none';
+      }
 
       document.getElementById('newPersonaName').value = p.name;
       document.getElementById('newPersonaDesc').value = p.short_desc || '';
@@ -793,6 +832,28 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
         this.closeModal('personaModal');
       } catch (err) {
         alert('Hiba a mentés során: ' + err.message);
+      }
+    },
+
+    async resetPersona(id, name) {
+      const confirmMsg = name
+        ? `Biztosan visszaállítod "${name}" alapértelmezett gyári beállításait?`
+        : 'Biztosan visszaállítod az eredeti gyári beállításokat?';
+      if (!confirm(confirmMsg)) return;
+
+      try {
+        const res = await fetch(`/api/personas/${encodeURIComponent(id)}/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Hiba a visszaállítás során');
+        }
+        this.closeModal('personaModal');
+        await this.fetchPersonas();
+      } catch (err) {
+        alert('Hiba a visszaállítás során: ' + err.message);
       }
     },
 

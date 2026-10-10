@@ -376,6 +376,19 @@ body {
   border-radius: var(--radius-full);
 }
 
+.badge-override {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .persona-desc {
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -459,6 +472,55 @@ body {
 
 .delete-persona-btn:hover {
   color: var(--danger-500);
+}
+
+.reset-persona-btn {
+  background: var(--bg-surface-elevated);
+  border: 1px solid #fed7aa;
+  border-radius: var(--radius-full);
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #c2410c;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.reset-persona-btn:hover {
+  border-color: #ea580c;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.persona-override-notice {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.persona-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.persona-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 /* Saved Topics List */

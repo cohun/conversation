@@ -361,6 +361,10 @@
           <button class="modal-close-btn" data-close="personaModal">&times;</button>
         </div>
         <div class="modal-body">
+          <div id="personaOverrideNotice" class="persona-override-notice" style="display: none;">
+            <span>ℹ️ <strong>Egyéni profilbeállítás:</strong> A módosítások kizárólag a te fiókodban lépnek érvénybe, más felhasználókat nem érintenek.</span>
+          </div>
+
           <div class="form-group">
             <label class="form-label" for="newPersonaName">Companion Name</label>
             <input type="text" id="newPersonaName" class="form-input" placeholder="e.g. Oliver, Emma, Daniel">
@@ -395,9 +399,15 @@
             <textarea id="newPersonaPrompt" class="form-textarea" placeholder="Instructions for how the companion should talk and behave..."></textarea>
           </div>
         </div>
-        <div class="modal-footer">
-          <button class="btn-secondary" data-close="personaModal">Cancel</button>
-          <button id="savePersonaBtn" class="btn-primary">Create Companion</button>
+        <div class="modal-footer persona-modal-footer">
+          <button id="resetPersonaModalBtn" type="button" class="btn-danger-outline" style="display: none;" title="Visszaállítás az eredeti gyári beállításokra">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+            <span>Alapértelmezett visszaállítása</span>
+          </button>
+          <div class="persona-footer-right">
+            <button class="btn-secondary" data-close="personaModal">Mégse</button>
+            <button id="savePersonaBtn" class="btn-primary">Mentés</button>
+          </div>
         </div>
       </div>
     </div>

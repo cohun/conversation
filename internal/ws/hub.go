@@ -162,7 +162,7 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 	// 4. Load Persona
 	var targetPersona *db.Persona
 	if personaID != "" {
-		p, err := h.db.GetPersona(personaID)
+		p, err := h.db.GetPersonaForUser(personaID, user.ID)
 		if err == nil {
 			targetPersona = p
 		}
