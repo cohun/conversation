@@ -117,6 +117,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const adminRefreshBtn = document.getElementById('adminRefreshBtn');
       if (adminRefreshBtn) adminRefreshBtn.addEventListener('click', () => this.fetchAdminUsers());
 
+      // Pending & Blocked Screen events
+      const pendingRefreshBtn = document.getElementById('pendingRefreshBtn');
+      if (pendingRefreshBtn) {
+        pendingRefreshBtn.addEventListener('click', async () => {
+          pendingRefreshBtn.disabled = true;
+          const origText = pendingRefreshBtn.innerHTML;
+          pendingRefreshBtn.innerHTML = `<span>Ellenőrzés...</span>`;
+          await this.fetchMe();
+          pendingRefreshBtn.disabled = false;
+          pendingRefreshBtn.innerHTML = origText;
+        });
+      }
+
+      const pendingLogoutBtn = document.getElementById('pendingLogoutBtn');
+      if (pendingLogoutBtn) pendingLogoutBtn.addEventListener('click', () => this.logout());
+
+      const blockedLogoutBtn = document.getElementById('blockedLogoutBtn');
+      if (blockedLogoutBtn) blockedLogoutBtn.addEventListener('click', () => this.logout());
+
       // Profile Save
       document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
 
@@ -283,7 +302,8 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         const endpoint = this.authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
         const payload = { email, password };
         if (this.authMode === 'register') {
-          payload.name = name || email.split('@')[0];
+          payload.display_name = name;
+          payload.name = name;
         }
 
         const res = await fetch(endpoint, {
@@ -347,6 +367,11 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       const adminBtn = document.getElementById('adminBtn');
       const statusAlert = document.getElementById('accountStatusAlert');
       const userQuotaPill = document.getElementById('userQuotaPill');
+      const userStatusBar = document.getElementById('userStatusBar');
+      const activeDashboard = document.getElementById('activeDashboard');
+      const pendingScreen = document.getElementById('pendingApprovalScreen');
+      const blockedScreen = document.getElementById('blockedScreen');
+      const pendingWelcomeTitle = document.getElementById('pendingWelcomeTitle');
 
       if (this.currentUser) {
         if (loginTriggerBtn) loginTriggerBtn.style.display = 'none';
@@ -360,6 +385,32 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         // Display name & avatar initial
         const name = this.currentUser.display_name || this.currentUser.name || this.currentUser.email.split('@')[0];
         const initial = name.trim().charAt(0).toUpperCase();
+
+        // Screen routing based on account status
+        if (this.currentUser.status === 'pending') {
+          // Welcome / Waiting screen: hide active learning dashboard and status bar
+          if (userStatusBar) userStatusBar.style.display = 'none';
+          if (activeDashboard) activeDashboard.style.display = 'none';
+          if (statusAlert) statusAlert.style.display = 'none';
+          if (blockedScreen) blockedScreen.style.display = 'none';
+          if (pendingScreen) pendingScreen.style.display = 'block';
+          if (pendingWelcomeTitle) pendingWelcomeTitle.textContent = `Üdvözlünk, ${this.escapeHtml(name)}! 👋`;
+        } else if (this.currentUser.status === 'blocked') {
+          // Blocked screen only
+          if (userStatusBar) userStatusBar.style.display = 'none';
+          if (activeDashboard) activeDashboard.style.display = 'none';
+          if (statusAlert) statusAlert.style.display = 'none';
+          if (pendingScreen) pendingScreen.style.display = 'none';
+          if (blockedScreen) blockedScreen.style.display = 'block';
+        } else {
+          // Active user: full access to learning dashboard
+          if (userStatusBar) userStatusBar.style.display = 'flex';
+          if (activeDashboard) activeDashboard.style.display = 'block';
+          if (pendingScreen) pendingScreen.style.display = 'none';
+          if (blockedScreen) blockedScreen.style.display = 'none';
+          if (statusAlert) statusAlert.style.display = 'none';
+        }
+
         document.getElementById('userDisplayName').textContent = `Hello, ${this.escapeHtml(name)} 👋`;
         document.getElementById('userAvatarBadge').textContent = initial;
 
@@ -379,21 +430,6 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
             const limit = this.currentUser.today_limit_minutes || 45;
             userQuotaPill.textContent = `⏱️ ${used} / ${limit} perc`;
             userQuotaPill.className = used >= limit ? 'user-quota-pill exceeded' : 'user-quota-pill';
-          }
-        }
-
-        // Account status banner (pending or blocked)
-        if (statusAlert) {
-          if (this.currentUser.status === 'pending') {
-            statusAlert.textContent = '⏳ A fiókod rendszergazdai jóváhagyásra vár. A hívás indításához az admin jóváhagyása szükséges.';
-            statusAlert.className = 'account-status-alert pending';
-            statusAlert.style.display = 'block';
-          } else if (this.currentUser.status === 'blocked') {
-            statusAlert.textContent = '🚫 A hozzáférésedet a rendszergazda felfüggesztette.';
-            statusAlert.className = 'account-status-alert blocked';
-            statusAlert.style.display = 'block';
-          } else {
-            statusAlert.style.display = 'none';
           }
         }
 
@@ -460,11 +496,16 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         }
 
       } else {
-        // Unauthenticated
+        // Unauthenticated / Guest
         if (loginTriggerBtn) loginTriggerBtn.style.display = 'inline-flex';
         if (profileBtn) profileBtn.style.display = 'none';
         if (adminBtn) adminBtn.style.display = 'none';
         if (statusAlert) statusAlert.style.display = 'none';
+
+        if (userStatusBar) userStatusBar.style.display = 'flex';
+        if (activeDashboard) activeDashboard.style.display = 'block';
+        if (pendingScreen) pendingScreen.style.display = 'none';
+        if (blockedScreen) blockedScreen.style.display = 'none';
 
         document.getElementById('userDisplayName').textContent = 'Vendég 👋';
         document.getElementById('userAvatarBadge').textContent = 'V';

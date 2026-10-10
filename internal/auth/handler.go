@@ -182,6 +182,7 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		Email       string `json:"email"`
 		Password    string `json:"password"`
 		DisplayName string `json:"display_name"`
+		Name        string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "Invalid request body")
@@ -236,6 +237,9 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 
 		displayName := strings.TrimSpace(body.DisplayName)
+		if displayName == "" {
+			displayName = strings.TrimSpace(body.Name)
+		}
 		user, err = h.database.CreateUser(email, string(hashed), "local", "", role, status, displayName)
 		if err != nil {
 			jsonErr(w, http.StatusInternalServerError, "Failed to create user: "+err.Error())

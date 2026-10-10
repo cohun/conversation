@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -45,6 +46,20 @@ func getEffectiveUserID(r *http.Request, authHandler *auth.Handler) string {
 		return user.ID
 	}
 	return "default_user"
+}
+
+func checkUserActive(r *http.Request, authHandler *auth.Handler) error {
+	user := authHandler.GetUserFromRequest(r)
+	if user == nil {
+		return fmt.Errorf("A művelethez bejelentkezés szükséges.")
+	}
+	if user.Status == "pending" {
+		return fmt.Errorf("A fiókod jóváhagyásra vár a rendszergazdánál.")
+	}
+	if user.Status == "blocked" {
+		return fmt.Errorf("A fiókodat az adminisztrátor felfüggesztette.")
+	}
+	return nil
 }
 
 func findStaticDir() string {
@@ -191,6 +206,10 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/personas", func(w http.ResponseWriter, r *http.Request) {
+		if err := checkUserActive(r, authHandler); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		userID := getEffectiveUserID(r, authHandler)
 		var p db.Persona
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
@@ -217,6 +236,10 @@ func main() {
 	})
 
 	mux.HandleFunc("PUT /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := checkUserActive(r, authHandler); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		userID := getEffectiveUserID(r, authHandler)
 		id := r.PathValue("id")
 		if id == "" {
@@ -279,6 +302,10 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/personas/{id}/reset", func(w http.ResponseWriter, r *http.Request) {
+		if err := checkUserActive(r, authHandler); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		userID := getEffectiveUserID(r, authHandler)
 		id := r.PathValue("id")
 		if id == "" {
@@ -321,6 +348,10 @@ func main() {
 	})
 
 	mux.HandleFunc("DELETE /api/personas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := checkUserActive(r, authHandler); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		id := r.PathValue("id")
 		if id == "" {
 			id = strings.TrimPrefix(r.URL.Path, "/api/personas/")
@@ -348,6 +379,10 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/conversations", func(w http.ResponseWriter, r *http.Request) {
+		if err := checkUserActive(r, authHandler); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		userID := getEffectiveUserID(r, authHandler)
 		var c db.SavedConversation
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {

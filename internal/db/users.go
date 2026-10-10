@@ -111,9 +111,13 @@ func (d *DB) CreateUser(
 	}
 
 	if displayName == "" {
-		// Use email prefix as initial display name
+		// Clean email prefix into a friendly display name (replace dots, underscores, hyphens with spaces)
 		parts := strings.Split(email, "@")
-		displayName = strings.Title(parts[0])
+		clean := parts[0]
+		clean = strings.ReplaceAll(clean, ".", " ")
+		clean = strings.ReplaceAll(clean, "_", " ")
+		clean = strings.ReplaceAll(clean, "-", " ")
+		displayName = strings.Title(strings.TrimSpace(clean))
 	}
 
 	// Create user profile

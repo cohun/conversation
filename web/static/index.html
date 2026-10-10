@@ -73,41 +73,111 @@
     <!-- Account Status Warning / Notice Banner (if pending/blocked) -->
     <div id="accountStatusAlert" class="account-status-alert" style="display: none;"></div>
 
-    <!-- Tab Navigation -->
-    <nav class="tabs-nav">
-      <button class="tab-btn active" data-tab="personas">
-        <span>👩‍🏫 Companions</span>
-        <span id="personasCountBadge" class="tab-badge">3</span>
-      </button>
-      <button class="tab-btn" data-tab="topics">
-        <span>📚 Saved Topics</span>
-        <span id="topicsCountBadge" class="tab-badge">0</span>
-      </button>
-    </nav>
+    <!-- ==========================================
+         Pending Approval Welcome Screen
+         ========================================== -->
+    <section id="pendingApprovalScreen" class="pending-screen" style="display: none;">
+      <div class="pending-card">
+        <div class="pending-icon-wrap">⏳</div>
+        <h2 id="pendingWelcomeTitle" class="pending-title">Üdvözlünk! 👋</h2>
+        <div class="pending-badge">Jóváhagyásra vár</div>
+        <p class="pending-intro">
+          A regisztrációd sikeresen megtörtént! Fiókod jelenleg a rendszergazda jóváhagyására vár.
+        </p>
 
-    <!-- Tab 1: Personas -->
-    <main id="tabPersonas" class="tab-pane active">
-      <div class="section-top-row">
-        <h2 class="section-heading">Choose a Companion</h2>
-        <button id="newPersonaBtn" class="add-persona-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          New Persona
-        </button>
-      </div>
-      <div id="personasList" class="persona-list">
-        <!-- Rendered dynamically via app.js -->
-      </div>
-    </main>
+        <div class="pending-feature-box">
+          <div class="pending-box-title">Mi vár rád a jóváhagyás után?</div>
+          <div class="pending-feature-item">
+            <span class="feat-icon">👩‍🏫</span>
+            <div>
+              <strong>3 különböző AI beszélgetőpartner</strong>
+              <p>Sarah (türelmes angoltanár), Fred (kötetlen barát) és Maya (üzleti coach) azonnal elérhető lesz számodra.</p>
+            </div>
+          </div>
+          <div class="pending-feature-item">
+            <span class="feat-icon">🎙️</span>
+            <div>
+              <strong>Élő mikrofonos beszélgetések</strong>
+              <p>Természetes beszédgyakorlás valós idejű kiejtés- és nyelvtani hibajavításokkal.</p>
+            </div>
+          </div>
+          <div class="pending-feature-item">
+            <span class="feat-icon">📚</span>
+            <div>
+              <strong>Témák elmentése és folytatása</strong>
+              <p>Bármikor megállíthatod és elmentheted a beszélgetést, hogy később onnan folytasd.</p>
+            </div>
+          </div>
+        </div>
 
-    <!-- Tab 2: Saved Topics -->
-    <section id="tabTopics" class="tab-pane">
-      <div class="section-top-row">
-        <h2 class="section-heading">Resumable Topics</h2>
-      </div>
-      <div id="topicsList">
-        <!-- Rendered dynamically via app.js -->
+        <div class="pending-notice">
+          ℹ️ Az adminisztrátor hamarosan aktiválja a fiókodat. Amint ez megtörténik, a felület automatikusan megnyílik.
+        </div>
+
+        <div class="pending-btn-row">
+          <button id="pendingRefreshBtn" class="btn-primary" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            <span>Állapot ellenőrzése</span>
+          </button>
+          <button id="pendingLogoutBtn" class="btn-secondary" type="button">
+            Kijelentkezés
+          </button>
+        </div>
       </div>
     </section>
+
+    <!-- Blocked Screen -->
+    <section id="blockedScreen" class="pending-screen" style="display: none;">
+      <div class="pending-card blocked-card">
+        <div class="pending-icon-wrap" style="background: #fee2e2; color: var(--danger-500);">🚫</div>
+        <h2 class="pending-title">Fiók felfüggesztve</h2>
+        <p class="pending-intro">
+          A hozzáférésedet az adminisztrátor felfüggesztette. Kérlek vedd fel a kapcsolatot a rendszergazdával a további részletekért.
+        </p>
+        <div class="pending-btn-row">
+          <button id="blockedLogoutBtn" class="btn-danger-outline" type="button">Kijelentkezés</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Learning Dashboard (visible when active or guest) -->
+    <div id="activeDashboard">
+      <!-- Tab Navigation -->
+      <nav class="tabs-nav">
+        <button class="tab-btn active" data-tab="personas">
+          <span>👩‍🏫 Companions</span>
+          <span id="personasCountBadge" class="tab-badge">3</span>
+        </button>
+        <button class="tab-btn" data-tab="topics">
+          <span>📚 Saved Topics</span>
+          <span id="topicsCountBadge" class="tab-badge">0</span>
+        </button>
+      </nav>
+
+      <!-- Tab 1: Personas -->
+      <main id="tabPersonas" class="tab-pane active">
+        <div class="section-top-row">
+          <h2 class="section-heading">Choose a Companion</h2>
+          <button id="newPersonaBtn" class="add-persona-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Persona
+          </button>
+        </div>
+        <div id="personasList" class="persona-list">
+          <!-- Rendered dynamically via app.js -->
+        </div>
+      </main>
+
+      <!-- Tab 2: Saved Topics -->
+      <section id="tabTopics" class="tab-pane">
+        <div class="section-top-row">
+          <h2 class="section-heading">Resumable Topics</h2>
+        </div>
+        <div id="topicsList">
+          <!-- Rendered dynamically via app.js -->
+        </div>
+      </section>
+    </div>
 
     <!-- ==========================================
          Active Fullscreen Phone Call Interface
