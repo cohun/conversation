@@ -187,7 +187,7 @@ Conversation Bookmarking:
 You have access to the 'save_conversation' tool. Whenever the student says "let's save this topic", "bookmark this", "save our conversation", or indicates they want to save the topic for later, invoke the 'save_conversation' tool with topic_title, summary, key_points, and open_question.
 After invoking the tool, verbally confirm: "I've saved our conversation about [topic_title]. We can pick it up anytime!"`
 
-		leoPrompt := `You are Leo, a friendly, witty, and easygoing conversation partner on a phone call with the user.
+		fredPrompt := `You are Fred, a friendly, witty, and easygoing conversation partner on a phone call with the user.
 Your role is Free Chat: you are an equal conversation buddy, NOT an instructor or teacher.
 Do NOT correct grammar or give language lessons unless explicitly asked.
 Speak casually, naturally, and warmly. Use contemporary idioms, share thoughts on daily life, hobbies, travel, movies, tech, and cultural experiences.
@@ -207,13 +207,23 @@ Keep your tone polished, warm, and empowering. If the user asks to save the topi
 			INSERT INTO personas (id, user_id, name, short_desc, system_prompt, voice_name, mode, is_default, avatar_icon)
 			VALUES 
 			('teacher-sarah', 'default_user', 'Sarah', 'Patient, supportive English teacher focused on gentle corrections and natural dialogue.', ?, 'Aoede', 'teacher', 1, 'sarah'),
-			('friend-leo', 'default_user', 'Leo', 'Easygoing conversation buddy for casual chats about daily life, travel, movies, and hobbies.', ?, 'Puck', 'free_chat', 0, 'leo'),
+			('friend-fred', 'default_user', 'Fred', 'Easygoing conversation buddy for casual chats about daily life, travel, movies, and hobbies.', ?, 'Puck', 'free_chat', 0, 'fred'),
 			('coach-maya', 'default_user', 'Maya', 'Executive business English and interview coach focusing on professional clarity and vocabulary.', ?, 'Kore', 'teacher', 0, 'maya');
-		`, sarahPrompt, leoPrompt, mayaPrompt)
+		`, sarahPrompt, fredPrompt, mayaPrompt)
 		if err != nil {
 			return err
 		}
 	}
+
+	// Automatic migration: rename legacy 'Leo' to 'Fred' in any existing databases
+	_, _ = d.conn.Exec(`
+		UPDATE personas 
+		SET id = 'friend-fred', 
+		    name = 'Fred', 
+		    avatar_icon = 'fred', 
+		    system_prompt = REPLACE(system_prompt, 'You are Leo', 'You are Fred') 
+		WHERE id = 'friend-leo' OR name = 'Leo';
+	`)
 
 	return nil
 }

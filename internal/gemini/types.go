@@ -57,8 +57,13 @@ type LiveBlob struct {
 }
 
 type LiveRealtimeInput struct {
-	MediaChunks []LiveBlob `json:"mediaChunks,omitempty"`
+	MediaChunks   []LiveBlob         `json:"mediaChunks,omitempty"`
+	ActivityStart *LiveActivityStart `json:"activityStart,omitempty"`
+	ActivityEnd   *LiveActivityEnd   `json:"activityEnd,omitempty"`
 }
+
+type LiveActivityStart struct{}
+type LiveActivityEnd struct{}
 
 type LiveClientContent struct {
 	Turns        []LiveContent `json:"turns,omitempty"`

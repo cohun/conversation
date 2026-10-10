@@ -2,7 +2,6 @@ package ws
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -174,185 +173,17 @@ func (h *Hub) HandleLiveWS(w http.ResponseWriter, r *http.Request) {
 		h.handleVoiceEngineSession(clientWS, targetPersona, profile, resumeConv, apiKey)
 		return
 	}
-	defer geminiWS.Close()
-
-	// Notify browser of successful connection
-	_ = clientWS.WriteJSON(ClientOutMessage{
-		Type:    "connected",
-		Model:   activeModel,
-		Persona: targetPersona.Name,
-	})
-
-	// If resuming conversation, send initial client content to prompt AI greeting
-	if resumeConv != nil {
-		resumePrompt := fmt.Sprintf(
-			"Hello! I am back. Let's resume our previous discussion about '%s'. Please greet me warmly and pick up from where we left off.",
-			resumeConv.TopicTitle,
-		)
-		initialTurn := gemini.LiveClientMessage{
-			ClientContent: &gemini.LiveClientContent{
-				Turns: []gemini.LiveContent{
-					{
-						Role: "user",
-						Parts: []gemini.LivePart{
-							{Text: resumePrompt},
-						},
-					},
-				},
-				TurnComplete: true,
-			},
-		}
-		_ = geminiWS.WriteJSON(initialTurn)
-	}
-
-	// Safety ceiling: Maximum 45 minutes per call session to strictly prevent runaway API costs
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
-	defer cancel()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Goroutine 1: Gemini -> Browser
-	go func() {
-		defer wg.Done()
-		defer cancel()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			_, rawMsg, err := geminiWS.conn.ReadMessage()
-			if err != nil {
-				log.Printf("[Hub] Gemini WS read closed: %v", err)
-				return
-			}
-
-			var serverMsg gemini.LiveServerMessage
-			if err := json.Unmarshal(rawMsg, &serverMsg); err != nil {
-				log.Printf("[Hub] Failed to parse Gemini server message: %v", err)
-				continue
-			}
-
-			// Handle Audio & Turn Content
-			if serverMsg.ServerContent != nil {
-				if serverMsg.ServerContent.Interrupted {
-					_ = clientWS.WriteJSON(ClientOutMessage{Type: "interrupted"})
-				}
-
-				if serverMsg.ServerContent.ModelTurn != nil {
-					for _, part := range serverMsg.ServerContent.ModelTurn.Parts {
-						if part.InlineData != nil && part.InlineData.Data != "" {
-							_ = clientWS.WriteJSON(ClientOutMessage{
-								Type: "audio",
-								Data: part.InlineData.Data,
-							})
-						}
-					}
-				}
-
-				if serverMsg.ServerContent.TurnComplete {
-					_ = clientWS.WriteJSON(ClientOutMessage{Type: "turn_complete"})
-				}
-			}
-
-			// Handle Tool Calls (save_conversation)
-			if serverMsg.ToolCall != nil && len(serverMsg.ToolCall.FunctionCalls) > 0 {
-				for _, fc := range serverMsg.ToolCall.FunctionCalls {
-					if fc.Name == "save_conversation" {
-						h.handleSaveConversationTool(geminiWS, clientWS, targetPersona.ID, fc)
-					}
-				}
-			}
-		}
-	}()
-
-	// Goroutine 2: Browser -> Gemini
-	go func() {
-		defer wg.Done()
-		defer cancel()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			var clientMsg ClientInMessage
-			if err := clientWS.conn.ReadJSON(&clientMsg); err != nil {
-				log.Printf("[Hub] Client WS read closed: %v", err)
-				return
-			}
-
-			switch clientMsg.Type {
-			case "audio":
-				if clientMsg.Data != "" {
-					inputMsg := gemini.LiveClientMessage{
-						RealtimeInput: &gemini.LiveRealtimeInput{
-							MediaChunks: []gemini.LiveBlob{
-								{
-									MimeType: "audio/pcm;rate=16000",
-									Data:     clientMsg.Data,
-								},
-							},
-						},
-					}
-					if err := geminiWS.WriteJSON(inputMsg); err != nil {
-						log.Printf("[Hub] Error writing audio to Gemini: %v", err)
-						return
-					}
-				}
-
-			case "pass_turn":
-				// User explicitly pressed "Pass Turn" / "Átadom a szót"
-				userText := strings.TrimSpace(clientMsg.Text)
-				if userText == "" {
-					userText = "[The student has finished speaking and handed the turn to you. Please proceed with your response.]"
-				}
-				passMsg := gemini.LiveClientMessage{
-					ClientContent: &gemini.LiveClientContent{
-						Turns: []gemini.LiveContent{
-							{
-								Role: "user",
-								Parts: []gemini.LivePart{
-									{Text: userText},
-								},
-							},
-						},
-						TurnComplete: true,
-					},
-				}
-				_ = geminiWS.WriteJSON(passMsg)
-
-			case "bookmark":
-				// User pressed "Bookmark" / "Téma mentése"
-				bookmarkMsg := gemini.LiveClientMessage{
-					ClientContent: &gemini.LiveClientContent{
-						Turns: []gemini.LiveContent{
-							{
-								Role: "user",
-								Parts: []gemini.LivePart{
-									{Text: "Please save this conversation topic now using the save_conversation tool, summarize what we discussed, note key vocabulary/points, and the open question."},
-								},
-							},
-						},
-						TurnComplete: true,
-					},
-				}
-				_ = geminiWS.WriteJSON(bookmarkMsg)
-
-			case "interrupt", "client_interrupt":
-				// Barge-in: user interrupted the AI
-				// Notify browser so audio queue is immediately flushed
-				_ = clientWS.WriteJSON(ClientOutMessage{Type: "interrupted"})
-			}
-		}
-	}()
-
-	wg.Wait()
+	session := newRollingLiveSession(
+		h,
+		clientWS,
+		targetPersona,
+		profile,
+		resumeConv,
+		apiKey,
+		activeModel,
+		geminiWS,
+	)
+	session.Run()
 }
 
 // connectToGeminiLive dials the Gemini Live WebSocket endpoint and performs the Setup handshake
@@ -362,6 +193,17 @@ func (h *Hub) connectToGeminiLive(
 	persona *db.Persona,
 	profile *db.UserProfile,
 	resume *db.SavedConversation,
+) (*SafeWebSocket, error) {
+	return h.connectToGeminiLiveWithContinuation(model, apiKey, persona, profile, resume, "")
+}
+
+func (h *Hub) connectToGeminiLiveWithContinuation(
+	model string,
+	apiKey string,
+	persona *db.Persona,
+	profile *db.UserProfile,
+	resume *db.SavedConversation,
+	continuationContext string,
 ) (*SafeWebSocket, error) {
 	liveURL := fmt.Sprintf(
 		"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=%s",
@@ -395,14 +237,27 @@ func (h *Hub) connectToGeminiLive(
 
 	// Add Resume Context if applicable
 	if resume != nil {
-		systemText += fmt.Sprintf(
-			"\n\n[Resuming Saved Topic]\nYou are resuming an earlier conversation with %s.\nTopic Title: %s\nSummary of prior discussion: %s\nKey Points/Vocabulary: %s\nLast Open Question: %s\nInstruction: Start the call with a warm welcome acknowledging this topic and invite their thoughts on the open question.",
-			profile.DisplayName,
-			resume.TopicTitle,
-			resume.Summary,
-			resume.KeyPoints,
-			resume.OpenQuestion,
-		)
+		if continuationContext == "" {
+			systemText += fmt.Sprintf(
+				"\n\n[Resuming Saved Topic]\nYou are resuming an earlier conversation with %s.\nTopic Title: %s\nSummary of prior discussion: %s\nKey Points/Vocabulary: %s\nLast Open Question: %s\nInstruction: Start the call with a warm welcome acknowledging this topic and invite their thoughts on the open question.",
+				profile.DisplayName,
+				resume.TopicTitle,
+				resume.Summary,
+				resume.KeyPoints,
+				resume.OpenQuestion,
+			)
+		} else {
+			systemText += fmt.Sprintf(
+				"\n\n[Resuming Saved Topic Background]\nTopic Title: %s\nSummary: %s\nKey Points: %s",
+				resume.TopicTitle,
+				resume.Summary,
+				resume.KeyPoints,
+			)
+		}
+	}
+
+	if continuationContext != "" {
+		systemText += "\n\n" + continuationContext
 	}
 
 	voiceName := persona.VoiceName
@@ -491,11 +346,10 @@ func (h *Hub) connectToGeminiLive(
 	}
 
 	if firstResp.SetupComplete == nil {
-		// Some implementations may return serverContent or error
-		log.Printf("[Hub] First response was not explicitly setupComplete: %s", string(firstRaw))
-	} else {
-		log.Printf("[Hub] Received setupComplete from Gemini Live for model %s", model)
+		safeWS.Close()
+		return nil, fmt.Errorf("gemini live setup failed (received: %s)", string(firstRaw))
 	}
+	log.Printf("[Hub] Received setupComplete from Gemini Live for model %s", model)
 
 	return safeWS, nil
 }
@@ -569,7 +423,7 @@ func (h *Hub) handleVoiceEngineSession(
 	resume *db.SavedConversation,
 	apiKey string,
 ) {
-	activeModel := "gemini-flash-latest"
+	activeModel := "gemini-3.8-flash"
 
 	// 1. Notify browser of successful connection
 	_ = clientWS.WriteJSON(ClientOutMessage{
@@ -606,8 +460,8 @@ func (h *Hub) handleVoiceEngineSession(
 	var mu sync.Mutex
 
 	candidateVoiceModels := []string{
+		"gemini-3.8-flash",
 		"gemini-3.5-flash",
-		"gemini-3.6-flash",
 		"gemini-flash-latest",
 		"gemini-3.7-flash",
 	}

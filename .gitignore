@@ -4,11 +4,12 @@
 *.dll
 *.so
 *.dylib
-server
+/server
 
 # Environment variables & Sensitive keys
 .env
 .env.*
+!.env.example
 *.env
 *.key
 *.pem

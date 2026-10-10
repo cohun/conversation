@@ -36,6 +36,15 @@ class AudioCallManager {
     // Timer
     this.startTime = null;
     this.timerInterval = null;
+
+    // Cache synthesized voices
+    this.cachedVoices = [];
+    if ('speechSynthesis' in window) {
+      this.cachedVoices = window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        this.cachedVoices = window.speechSynthesis.getVoices();
+      };
+    }
   }
 
   async start() {
@@ -146,16 +155,32 @@ class AudioCallManager {
       };
 
       this.recognition.onerror = (event) => {
+        if (event.error === 'not-allowed') {
+          console.warn('[AudioCall] SpeechRecognition permission denied');
+          try {
+            this.recognition.abort();
+          } catch (e) {}
+          this.recognition = null;
+          return;
+        }
+        if (event.error === 'network') {
+          console.warn('[AudioCall] SpeechRecognition network timeout - auto-restarting in 1s...');
+          return;
+        }
         if (event.error !== 'no-speech') {
-          console.warn('[AudioCall] SpeechRecognition error:', event.error);
+          console.warn('[AudioCall] SpeechRecognition notice:', event.error);
         }
       };
 
       this.recognition.onend = () => {
         if (this.state !== 'ended' && this.recognition) {
-          try {
-            this.recognition.start();
-          } catch (e) {}
+          setTimeout(() => {
+            if (this.state !== 'ended' && this.recognition) {
+              try {
+                this.recognition.start();
+              } catch (e) {}
+            }
+          }, 800);
         }
       };
 
@@ -285,9 +310,20 @@ class AudioCallManager {
     utterance.pitch = 1.05;
 
     // Pick best natural English voice
-    const voices = window.speechSynthesis.getVoices();
-    const enVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha') || v.name.includes('Jenny') || v.name.includes('Female'))) ||
-                    voices.find(v => v.lang.startsWith('en'));
+    let voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) {
+      voices = this.cachedVoices || [];
+    }
+    const enVoice = voices.find(v => v.lang.startsWith('en') && (
+      v.name.includes('Samantha') || 
+      v.name.includes('Ava') || 
+      v.name.includes('Allison') || 
+      v.name.includes('Siri') || 
+      v.name.includes('Serena') || 
+      v.name.includes('Natural') || 
+      v.name.includes('Google') || 
+      v.name.includes('Jenny')
+    )) || voices.find(v => v.lang === 'en-US') || voices.find(v => v.lang.startsWith('en'));
     if (enVoice) {
       utterance.voice = enVoice;
     }
@@ -381,6 +417,10 @@ class AudioCallManager {
   }
 
   setAiSpeaking(speaking) {
+    if (this.thinkingTimer) {
+      clearTimeout(this.thinkingTimer);
+      this.thinkingTimer = null;
+    }
     this.isAiSpeaking = speaking;
     if (speaking) {
       this.setState('speaking');
@@ -414,6 +454,13 @@ class AudioCallManager {
         this.resetSpeechRecognitionTranscript();
       }
       this.setState('thinking');
+      if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
+      this.thinkingTimer = setTimeout(() => {
+        if (this.state === 'thinking') {
+          console.warn('[AudioCall] Response timeout - switching back to listening');
+          this.setState('listening');
+        }
+      }, 18000);
       this.ws.send(JSON.stringify({
         type: 'pass_turn',
         text: textToSend,

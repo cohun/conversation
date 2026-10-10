@@ -37,7 +37,10 @@ document.addEventListener('DOMContentLoaded', () => {
       // Header actions & Handshake edit
       document.getElementById('profileBtn').addEventListener('click', () => this.openModal('profileModal'));
       document.getElementById('handshakeEditBtn').addEventListener('click', () => this.openModal('profileModal'));
-      document.getElementById('settingsBtn').addEventListener('click', () => this.openModal('settingsModal'));
+      const settingsBtn = document.getElementById('settingsBtn');
+      if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => this.openModal('settingsModal'));
+      }
       document.getElementById('newPersonaBtn').addEventListener('click', () => this.openNewPersonaModal());
 
       // Modal close buttons
@@ -291,7 +294,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
 
     getAvatarEmoji(p) {
       if (p.avatar_icon === 'sarah' || p.name === 'Sarah') return '👩‍🏫';
-      if (p.avatar_icon === 'leo' || p.name === 'Leo') return '🧔‍♂️';
+      if (p.avatar_icon === 'fred' || p.name === 'Fred' || p.avatar_icon === 'leo' || p.name === 'Leo') return '🧔‍♂️';
       if (p.avatar_icon === 'maya' || p.name === 'Maya') return '👩‍💼';
       return p.mode === 'teacher' ? '🧑‍🏫' : '🎙️';
     },
