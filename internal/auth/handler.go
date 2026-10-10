@@ -279,14 +279,28 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.PasswordHash == "" && user.AuthProvider == "google" {
-		jsonErr(w, http.StatusBadRequest, "This account was created with Google. Please use 'Sign in with Google'.")
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
-		jsonErr(w, http.StatusUnauthorized, "Invalid email or password.")
-		return
+	if user.PasswordHash == "" {
+		// The account was bootstrapped (e.g. admin) or pre-created without a password.
+		// Allow the user to claim and set their password now.
+		if len(body.Password) < 6 {
+			jsonErr(w, http.StatusBadRequest, "Please provide a password of at least 6 characters.")
+			return
+		}
+		hashed, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "Failed to hash password")
+			return
+		}
+		if err := h.database.UpdateUserPassword(user.ID, string(hashed)); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "Failed to save password: "+err.Error())
+			return
+		}
+		user.PasswordHash = string(hashed)
+	} else {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
+			jsonErr(w, http.StatusUnauthorized, "Invalid email or password.")
+			return
+		}
 	}
 
 	// Update admin status if email matches configured admins

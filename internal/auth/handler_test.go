@@ -129,3 +129,57 @@ func TestRegisterAndLogin(t *testing.T) {
 		t.Fatalf("Expected admin/active, got role=%s status=%s", adminMeResp.User.Role, adminMeResp.User.Status)
 	}
 }
+
+func TestBootstrappedAdminCanLoginDirectly(t *testing.T) {
+	handler, database := setupTestEnv(t)
+	defer database.Close()
+
+	// Bootstrap admin accounts (creates user with empty password)
+	err := database.EnsureAdminEmails([]string{"attila.hitb@gmail.com"})
+	if err != nil {
+		t.Fatalf("EnsureAdminEmails failed: %v", err)
+	}
+
+	// Now admin directly logs in via HandleLogin with a password
+	loginPayload := map[string]string{
+		"email":    "attila.hitb@gmail.com",
+		"password": "mySecurePassword123",
+	}
+	body, _ := json.Marshal(loginPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.HandleLogin(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for bootstrapped admin login, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the session works and user is admin
+	cookies := w.Result().Cookies()
+	var token string
+	for _, c := range cookies {
+		if c.Name == "session_token" {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		t.Fatalf("Expected session_token cookie")
+	}
+
+	reqMe := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	reqMe.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	wMe := httptest.NewRecorder()
+	handler.HandleGetMe(wMe, reqMe)
+
+	var meResp struct {
+		Authenticated bool `json:"authenticated"`
+		User          struct {
+			Role   string `json:"role"`
+			Status string `json:"status"`
+		} `json:"user"`
+	}
+	_ = json.NewDecoder(wMe.Body).Decode(&meResp)
+	if !meResp.Authenticated || meResp.User.Role != "admin" || meResp.User.Status != "active" {
+		t.Fatalf("Expected authenticated active admin, got %+v", meResp)
+	}
+}
