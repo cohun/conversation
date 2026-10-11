@@ -61,22 +61,6 @@ class AudioCallManager {
       (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
   }
 
-  applyAudioSessionMode() {
-    if (!this.isMobileDevice()) return;
-    if ('audioSession' in navigator) {
-      try {
-        if (this.state === 'listening' || !this.isSpeakerphone) {
-          navigator.audioSession.type = 'play-and-record';
-        } else {
-          // In 'speaking' / 'thinking' with speakerphone: pure media playback routes to loudspeaker!
-          navigator.audioSession.type = 'playback';
-        }
-      } catch (e) {
-        console.warn('[AudioCall] navigator.audioSession notice:', e);
-      }
-    }
-  }
-
   applyAudioRouting() {
     if (!this.outputGain || !this.audioCtx) return;
 
@@ -96,7 +80,6 @@ class AudioCallManager {
       } else if (!this.isSpeakerphone && !this.micStream) {
         this.startMicrophoneCapture();
       }
-      this.applyAudioSessionMode();
     }
     return this.isSpeakerphone;
   }
@@ -104,16 +87,12 @@ class AudioCallManager {
   setSpeakerphone(enabled) {
     this.isSpeakerphone = !!enabled;
     this.applyAudioRouting();
-    if (this.isMobileDevice()) {
-      this.applyAudioSessionMode();
-    }
     return this.isSpeakerphone;
   }
 
   async startMicrophoneCapture() {
     if (this.micStream) return;
     try {
-      this.applyAudioSessionMode();
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -163,11 +142,16 @@ class AudioCallManager {
       this.micStream = null;
       console.log('[AudioCall] 🛑 Mobile Hardware Teardown: mic stopped, phone released to media loudspeaker mode!');
     }
-    this.applyAudioSessionMode();
   }
 
   async start() {
     try {
+      if ('audioSession' in navigator) {
+        try {
+          navigator.audioSession.type = 'auto';
+        } catch (e) {}
+      }
+
       this.setState('connecting');
       const isMobile = this.isMobileDevice();
 
@@ -181,7 +165,7 @@ class AudioCallManager {
       // 2. Pre-load AudioWorklet module
       if (this.audioCtx.audioWorklet) {
         try {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.7');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.10');
           this.workletModuleLoaded = true;
         } catch (e) {
           this.workletModuleLoaded = false;
@@ -229,7 +213,6 @@ class AudioCallManager {
         // Releasing microphone tracks immediately returns phone to pure media stereo loudspeaker mode!
         permStream.getTracks().forEach((track) => track.stop());
         this.micStream = null;
-        this.applyAudioSessionMode();
         console.log('[AudioCall] 🔊 Mobile initial Hardware Teardown: mic released for Sarah greeting');
       } else {
         // Desktop: Maintain persistent mic stream as verified and working
@@ -255,7 +238,7 @@ class AudioCallManager {
     if (this.audioCtx.audioWorklet) {
       try {
         if (!this.workletModuleLoaded) {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.7');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.10');
           this.workletModuleLoaded = true;
         }
         this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
