@@ -223,3 +223,31 @@ func TestUserPersonaOverridesAndReset(t *testing.T) {
 		t.Errorf("User 1 Sarah was not restored to default: %+v", p1AfterReset)
 	}
 }
+
+func TestDBInitCorruptionAutoRecovery(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "corrupt_test.db")
+
+	// 1. Create a completely corrupted file simulating disk corruption
+	err := os.WriteFile(dbPath, []byte("THIS IS COMPLETE GARBAGE DATA NOT A SQLITE DB"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write mock corrupted db: %v", err)
+	}
+
+	// 2. InitDB should detect corruption and auto-recover cleanly
+	database, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("Expected InitDB to auto-recover from corrupted file, but got error: %v", err)
+	}
+	defer database.Close()
+
+	// 3. Verify the recovered database is healthy and can run queries
+	personas, err := database.ListPersonas("test_user")
+	if err != nil {
+		t.Fatalf("ListPersonas on recovered database failed: %v", err)
+	}
+	if len(personas) == 0 {
+		t.Errorf("Expected seeded personas in recovered database, got 0")
+	}
+}
+

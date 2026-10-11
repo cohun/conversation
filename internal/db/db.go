@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +60,8 @@ func InitDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to create db directory %s: %w", dir, err)
 	}
 
-	conn, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(DELETE)"
+	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
@@ -67,7 +69,33 @@ func InitDB(dbPath string) (*DB, error) {
 	database := &DB{conn: conn}
 	if err := database.migrate(); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
+		// Auto-recovery for corrupted SQLite files (e.g. malformed disk image after hard kill or container sync issue)
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "malformed") ||
+			strings.Contains(errStr, "corrupt") ||
+			strings.Contains(errStr, "not a database") ||
+			strings.Contains(errStr, "disk i/o error") {
+			log.Printf("[DB] ⚠️ Corrupted SQLite database detected (%v). Auto-recovering clean database at %s...", err, dbPath)
+			backupPath := fmt.Sprintf("%s.corrupt.%d", dbPath, time.Now().Unix())
+			_ = os.Rename(dbPath, backupPath)
+			_ = os.Remove(dbPath + "-wal")
+			_ = os.Remove(dbPath + "-shm")
+			_ = os.Remove(dbPath + "-journal")
+
+			// Re-open clean database
+			conn, err = sql.Open("sqlite", dsn)
+			if err != nil {
+				return nil, fmt.Errorf("failed to recreate sqlite database after corruption: %w", err)
+			}
+			database.conn = conn
+			if err := database.migrate(); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("failed to migrate fresh database: %w", err)
+			}
+			log.Printf("[DB] ✅ Successfully recovered fresh SQLite database.")
+		} else {
+			return nil, fmt.Errorf("failed to migrate database: %w", err)
+		}
 	}
 
 	if err := database.seed(); err != nil {
