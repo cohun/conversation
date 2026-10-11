@@ -183,3 +183,66 @@ func TestBootstrappedAdminCanLoginDirectly(t *testing.T) {
 		t.Fatalf("Expected authenticated active admin, got %+v", meResp)
 	}
 }
+
+func TestSessionCookieSecureOnHTTPS(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "https_auth_test.db")
+	database, err := db.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer database.Close()
+
+	cfg := &config.Config{
+		Port:        "8080",
+		DBPath:      dbPath,
+		AdminEmails: []string{"attila.hitb@gmail.com"},
+		AppURL:      "https://english-teacher-app.example.com",
+	}
+
+	resolver := gemini.NewModelResolver(database, "auto")
+	handler := NewHandler(cfg, database, resolver)
+
+	// 1. Check setSessionCookie produces Secure=true and SameSite=Lax
+	wSet := httptest.NewRecorder()
+	handler.setSessionCookie(wSet, "dummy-token")
+	var setCookie *http.Cookie
+	for _, c := range wSet.Result().Cookies() {
+		if c.Name == "session_token" {
+			setCookie = c
+			break
+		}
+	}
+	if setCookie == nil {
+		t.Fatalf("Expected session_token cookie")
+	}
+	if !setCookie.Secure {
+		t.Errorf("Expected Secure=true on HTTPS for setSessionCookie")
+	}
+	if setCookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("Expected SameSite=Lax on HTTPS for setSessionCookie")
+	}
+
+	// 2. Check clearSessionCookie produces Secure=true and SameSite=Lax so browser allows deleting Secure cookie
+	wClear := httptest.NewRecorder()
+	handler.clearSessionCookie(wClear)
+	var clearCookie *http.Cookie
+	for _, c := range wClear.Result().Cookies() {
+		if c.Name == "session_token" {
+			clearCookie = c
+			break
+		}
+	}
+	if clearCookie == nil {
+		t.Fatalf("Expected session_token cookie on clear")
+	}
+	if !clearCookie.Secure {
+		t.Errorf("Expected Secure=true on HTTPS for clearSessionCookie to allow browser deletion")
+	}
+	if clearCookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("Expected SameSite=Lax on HTTPS for clearSessionCookie")
+	}
+	if clearCookie.MaxAge >= 0 {
+		t.Errorf("Expected MaxAge < 0 for clearing cookie, got %d", clearCookie.MaxAge)
+	}
+}

@@ -85,6 +85,7 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
 }
 
 func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
+	secure := strings.HasPrefix(h.cfg.AppURL, "https://")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
@@ -92,6 +93,8 @@ func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 
@@ -380,15 +383,18 @@ func (h *Handler) HandleGoogleLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = rand.Read(stateBytes)
 	state := hex.EncodeToString(stateBytes)
 
+	secure := strings.HasPrefix(h.cfg.AppURL, "https://")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    state,
 		Path:     "/",
 		Expires:  time.Now().Add(10 * time.Minute),
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
 	})
 
-	url := h.oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	url := h.oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "select_account"))
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
@@ -501,6 +507,8 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   strings.HasPrefix(h.cfg.AppURL, "https://"),
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	http.Redirect(w, r, "/?auth_success=1", http.StatusTemporaryRedirect)

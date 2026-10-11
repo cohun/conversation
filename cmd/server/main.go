@@ -510,7 +510,7 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.10-fix-ios-audiosession-category"
+	const AppVersion = "2.4.11-admin-session-auth-fix"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,

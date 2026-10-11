@@ -468,7 +468,7 @@ func (d *DB) GetAllUsersWithStats() ([]AdminUserView, error) {
 	}
 	defer rows.Close()
 
-	var list []AdminUserView
+	list := make([]AdminUserView, 0)
 	for rows.Next() {
 		var v AdminUserView
 		var customKey string

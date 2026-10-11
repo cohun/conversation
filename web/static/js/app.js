@@ -341,6 +341,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         await fetch('/api/auth/logout', { method: 'POST' });
         this.currentUser = null;
         this.closeModal('profileModal');
+        this.closeModal('adminModal');
         await this.loadAll();
       } catch (err) {
         console.error('Logout error:', err);
@@ -1073,7 +1074,8 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       try {
         const res = await fetch('/api/admin/users');
         if (!res.ok) {
-          throw new Error('Jogosulatlan hozzáférés vagy admin hiba');
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status}: Jogosulatlan hozzáférés vagy admin hiba`);
         }
         this.adminUsers = await res.json();
         this.renderAdminUsers();
