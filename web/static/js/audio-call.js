@@ -20,8 +20,6 @@ class AudioCallManager {
     this.audioCtx = null;
     this.outputGain = null;
     this.compressor = null;
-    this.mediaDest = null;
-    this.mobileAudioElement = null;
     this.isSpeakerphone = true; // Default to loudspeaker on mobile devices
     this.micStream = null;
     this.workletNode = null;
@@ -33,6 +31,7 @@ class AudioCallManager {
     this.activeSourceNodes = [];
     this.nextPlayTime = 0;
     this.isAiSpeaking = false;
+    this.turnCompleteReceived = false;
     this.turnCompletionTimer = null;
     this.thinkingTimer = null;
 
@@ -59,65 +58,48 @@ class AudioCallManager {
       (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
   }
 
-  ensureMobileAudioElement() {
-    if (!this.audioCtx) return null;
-    if (!this.mediaDest && this.audioCtx.createMediaStreamDestination) {
-      this.mediaDest = this.audioCtx.createMediaStreamDestination();
+  setMicrophoneHardwareEnabled(enabled) {
+    if (this.micStream) {
+      this.micStream.getAudioTracks().forEach((track) => {
+        if (track.enabled !== enabled) {
+          track.enabled = enabled;
+        }
+      });
     }
-    if (!this.mobileAudioElement) {
-      let el = document.getElementById('antigravityMobileAudio');
-      if (!el) {
-        el = document.createElement('audio');
-        el.id = 'antigravityMobileAudio';
-        el.setAttribute('playsinline', 'true');
-        el.setAttribute('webkit-playsinline', 'true');
-        el.setAttribute('autoplay', 'true');
-        el.style.display = 'none';
-        document.body.appendChild(el);
+  }
+
+  applyAudioSessionMode() {
+    if (!this.isMobileDevice()) return;
+    if ('audioSession' in navigator) {
+      try {
+        if (this.state === 'listening' || !this.isSpeakerphone) {
+          navigator.audioSession.type = 'play-and-record';
+        } else {
+          // 'speaking' or 'thinking' with speakerphone enabled -> playback routes to loudspeaker!
+          navigator.audioSession.type = 'playback';
+        }
+      } catch (e) {
+        console.warn('[AudioCall] navigator.audioSession error:', e);
       }
-      this.mobileAudioElement = el;
     }
-    if (this.mediaDest && this.mobileAudioElement.srcObject !== this.mediaDest.stream) {
-      this.mobileAudioElement.srcObject = this.mediaDest.stream;
-    }
-    this.mobileAudioElement.volume = 1.0;
-    return this.mobileAudioElement;
   }
 
   applyAudioRouting() {
     if (!this.compressor || !this.audioCtx) return;
 
-    // Disconnect compressor from ALL outputs first to guarantee NO double playback or chorus echo!
     try {
       this.compressor.disconnect();
     } catch (e) {}
 
     const isMobile = this.isMobileDevice();
-
-    if (this.isSpeakerphone && isMobile && this.audioCtx.createMediaStreamDestination) {
-      // === MOBILE LOUDSPEAKER ROUTE ===
-      // On mobile phones (iOS Safari & Android Chrome), direct audioCtx.destination routes to the phone earpiece (receiver).
-      // Piping Web Audio into an HTML5 <audio playsinline autoplay> element instructs iOS and Android
-      // to route output to the main bottom LOUDSPEAKER (Speakerphone / STREAM_MUSIC).
-      // CRITICAL: The compressor connects ONLY to mediaDest (NOT audioCtx.destination), completely preventing any duplicate voice echo!
-      const el = this.ensureMobileAudioElement();
-      if (el && this.mediaDest) {
-        el.muted = false;
-        this.compressor.connect(this.mediaDest);
-        el.play().catch((err) => {
-          console.warn('[AudioCall] mobileAudioElement.play notice (will resume on user tap/speech):', err.name);
-        });
-        console.log('[AudioCall] 🔊 Audio route: Mobile Loudspeaker (MediaStreamDestination -> <audio>)');
-        return;
-      }
+    const targetGain = (isMobile && this.isSpeakerphone) ? 3.6 : (isMobile ? 1.2 : 1.15);
+    if (this.outputGain) {
+      this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
     }
 
-    // === DIRECT ROUTE (Desktop or Earpiece mode) ===
-    if (this.mobileAudioElement) {
-      this.mobileAudioElement.muted = true; // Mute instead of detaching srcObject to prevent AbortError!
-    }
     this.compressor.connect(this.audioCtx.destination);
-    console.log(`[AudioCall] 🎧 Audio route: Direct AudioContext Destination (${isMobile ? 'Earpiece' : 'Desktop'})`);
+    this.applyAudioSessionMode();
+    console.log(`[AudioCall] 🔊 Audio route: Direct AudioContext Destination (${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker' : 'Mobile Earpiece') : 'Desktop 1.15x'})`);
   }
 
   toggleSpeakerphone() {
@@ -137,16 +119,16 @@ class AudioCallManager {
       this.setState('connecting');
       const isMobile = this.isMobileDevice();
 
-      // 1. AudioSession setup for iOS Safari 16.4+
-      if ('audioSession' in navigator) {
+      // 1. AudioSession initial kick for iOS Safari 16.4+
+      if (isMobile && 'audioSession' in navigator) {
         try {
-          navigator.audioSession.type = 'play-and-record';
+          navigator.audioSession.type = 'auto';
         } catch (asErr) {
           console.warn('[AudioCall] navigator.audioSession notice:', asErr);
         }
       }
 
-      // 2. Initialize Web Audio Context (request native 16kHz context if supported)
+      // 2. Initialize Web Audio Context (request interactive latency)
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
       if (this.audioCtx.state === 'suspended') {
@@ -154,9 +136,9 @@ class AudioCallManager {
       }
 
       // 3. Master output amplifier & dynamics compressor
-      // Desktop: 1.15x gain (comfortable, clean listening volume for headphones/speakers, not blasting!)
+      // Desktop: 1.15x gain (comfortable, clean listening volume for headphones/speakers)
       // Mobile: 3.6x gain (loud speakerphone for phone loudspeaker)
-      const targetGain = isMobile ? 3.6 : 1.15;
+      const targetGain = (isMobile && this.isSpeakerphone) ? 3.6 : (isMobile ? 1.2 : 1.15);
       this.outputGain = this.audioCtx.createGain();
       this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
@@ -176,16 +158,9 @@ class AudioCallManager {
       }
 
       this.outputGain.connect(this.compressor);
+      this.compressor.connect(this.audioCtx.destination);
 
-      // 4. Pre-create and unlock Mobile Loudspeaker <audio> element DURING user gesture!
-      if (isMobile && this.audioCtx.createMediaStreamDestination) {
-        this.ensureMobileAudioElement();
-        if (this.mobileAudioElement) {
-          this.mobileAudioElement.play().catch(() => {});
-        }
-      }
-
-      // 5. Request microphone access without aggressive noise gating
+      // 4. Request microphone access without aggressive noise gating
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -195,18 +170,16 @@ class AudioCallManager {
         },
       });
 
-      // 6. Apply final audio routing AFTER getUserMedia completes and OS audio route settles!
-      if ('audioSession' in navigator) {
-        try {
-          navigator.audioSession.type = 'play-and-record';
-        } catch (e) {}
+      // 5. On mobile, mute mic hardware during greeting & set audioSession to playback for loudspeaker!
+      if (isMobile) {
+        this.setMicrophoneHardwareEnabled(false);
       }
       this.applyAudioRouting();
 
-      // 7. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
+      // 6. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
       await this.initMicrophoneCapture();
 
-      // 8. Connect WebSocket to server proxy
+      // 7. Connect WebSocket to server proxy
       this.connectWebSocket();
 
     } catch (err) {
@@ -328,14 +301,11 @@ class AudioCallManager {
     if (!pcm) return;
     if (this.isMuted) return;
 
-    // Auto-clear stale isAiSpeaking if no audio is actually playing in the queue
-    if (this.isAiSpeaking && this.activeSourceNodes.length === 0) {
-      this.setAiSpeaking(false);
-      this.setState('listening');
+    // Strict State Guard: ONLY stream microphone audio when state is 'listening'
+    // Absolutely NEVER stream while 'thinking', 'speaking', or while AI is speaking
+    if (this.state !== 'listening' || this.isAiSpeaking) {
+      return;
     }
-
-    // Suppress mic transmission while AI is actively speaking through speakers to eliminate feedback echo
-    if (this.isAiSpeaking) return;
 
     // Send 16kHz PCM audio chunk to WebSocket
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -424,21 +394,9 @@ class AudioCallManager {
         break;
 
       case 'turn_complete':
-        if (this.activeSourceNodes.length === 0) {
-          this.setAiSpeaking(false);
-          this.setState('listening');
-          console.log('[AudioCall] 👂 Turn complete: listening to student.');
-        } else {
-          // If audio chunks are still playing out of the speaker, schedule guaranteed release!
-          const remainingSec = Math.max(0.05, this.nextPlayTime - this.audioCtx.currentTime);
-          if (this.turnCompletionTimer) clearTimeout(this.turnCompletionTimer);
-          this.turnCompletionTimer = setTimeout(() => {
-            this.activeSourceNodes = [];
-            this.setAiSpeaking(false);
-            this.setState('listening');
-            console.log('[AudioCall] 👂 Audio queue playback completed. Listening to student!');
-          }, Math.ceil((remainingSec + 0.1) * 1000));
-        }
+        console.log('[AudioCall] 🏁 turn_complete received from server');
+        this.turnCompleteReceived = true;
+        this.checkIfAiSpeechFinished();
         break;
 
       case 'topic_saved':
@@ -557,17 +515,10 @@ class AudioCallManager {
       this.nextPlayTime = now + 0.03;
     }
 
-    // Guarantee mobile audio element is actively playing whenever speech arrives
-    if (this.isMobileDevice() && this.isSpeakerphone && this.mobileAudioElement) {
-      if (this.mobileAudioElement.paused) {
-        this.mobileAudioElement.play().catch(() => {});
-      }
-    }
-
     const source = this.audioCtx.createBufferSource();
     source.buffer = buffer;
 
-    // Connect to master output amplifier (3.2x gain + compressor)
+    // Connect to master output amplifier (gain + dynamics compressor -> destination)
     if (this.outputGain) {
       source.connect(this.outputGain);
     } else {
@@ -585,16 +536,50 @@ class AudioCallManager {
       if (idx !== -1) {
         this.activeSourceNodes.splice(idx, 1);
       }
-      if (this.activeSourceNodes.length === 0) {
-        if (this.turnCompletionTimer) {
-          clearTimeout(this.turnCompletionTimer);
-          this.turnCompletionTimer = null;
-        }
-        this.setAiSpeaking(false);
-        this.setState('listening');
-        console.log('[AudioCall] 👂 All audio playback ended. Listening to student!');
+      // Check for clean turn completion if server has marked generation complete
+      if (this.turnCompleteReceived) {
+        this.checkIfAiSpeechFinished();
       }
     };
+  }
+
+  checkIfAiSpeechFinished() {
+    if (!this.turnCompleteReceived) return;
+
+    if (!this.audioCtx) {
+      this.finishAiTurn();
+      return;
+    }
+
+    const now = this.audioCtx.currentTime;
+    const remainingSec = this.nextPlayTime - now;
+
+    if (this.turnCompletionTimer) {
+      clearTimeout(this.turnCompletionTimer);
+      this.turnCompletionTimer = null;
+    }
+
+    if (remainingSec <= 0.05 && this.activeSourceNodes.length === 0) {
+      this.finishAiTurn();
+    } else {
+      // Schedule check when all queued audio has finished playing + 300ms safety cushion
+      const delayMs = Math.max(80, Math.ceil((remainingSec + 0.3) * 1000));
+      this.turnCompletionTimer = setTimeout(() => {
+        this.checkIfAiSpeechFinished();
+      }, delayMs);
+    }
+  }
+
+  finishAiTurn() {
+    if (this.turnCompletionTimer) {
+      clearTimeout(this.turnCompletionTimer);
+      this.turnCompletionTimer = null;
+    }
+    this.turnCompleteReceived = false;
+    this.activeSourceNodes = [];
+    this.setAiSpeaking(false);
+    this.setState('listening');
+    console.log('[AudioCall] 👂 AI speech finished playing completely. Listening to student!');
   }
 
   flushAudioQueue() {
@@ -602,6 +587,7 @@ class AudioCallManager {
       clearTimeout(this.turnCompletionTimer);
       this.turnCompletionTimer = null;
     }
+    this.turnCompleteReceived = false;
 
     if ('speechSynthesis' in window) {
       try {
@@ -631,26 +617,27 @@ class AudioCallManager {
     this.isAiSpeaking = speaking;
     if (speaking) {
       this.setState('speaking');
-    } else {
-      if (this.state === 'speaking' || this.state === 'thinking') {
-        this.setState('listening');
-      }
     }
   }
 
   setState(newState) {
     this.state = newState;
+    const isMobile = this.isMobileDevice();
+
+    if (isMobile) {
+      if (newState === 'listening') {
+        this.setMicrophoneHardwareEnabled(true);
+      } else {
+        // In 'thinking', 'speaking', 'connecting' -> mute mic hardware on mobile to kill acoustic feedback!
+        this.setMicrophoneHardwareEnabled(false);
+      }
+      this.applyAudioSessionMode();
+    }
+
     this.onStateChange(newState);
   }
 
   passTurn() {
-    // Prime mobile loudspeaker element inside user gesture so it is guaranteed awake for Sarah's reply!
-    if (this.isMobileDevice() && this.isSpeakerphone && this.mobileAudioElement) {
-      if (this.mobileAudioElement.paused) {
-        this.mobileAudioElement.play().catch(() => {});
-      }
-    }
-
     // Check if AI is genuinely speaking with active audio nodes in queue
     const isActuallyPlaying = this.isAiSpeaking && this.activeSourceNodes.length > 0;
     if (isActuallyPlaying) {
@@ -658,10 +645,8 @@ class AudioCallManager {
       return;
     }
 
-    // Force release stale flag if present
-    if (this.isAiSpeaking) {
-      this.setAiSpeaking(false);
-    }
+    this.turnCompleteReceived = false;
+    this.setAiSpeaking(false);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       console.log(`[AudioCall] 🎯 passTurn: passing turn to partner (chunks streamed in turn: ${this.sentAudioChunkCount})`);
@@ -731,7 +716,10 @@ class AudioCallManager {
     }
 
     if (this.micStream) {
-      this.micStream.getTracks().forEach((track) => track.stop());
+      this.micStream.getTracks().forEach((track) => {
+        track.enabled = true;
+        track.stop();
+      });
       this.micStream = null;
     }
 
@@ -749,17 +737,11 @@ class AudioCallManager {
       this.workletNode = null;
     }
 
-    if (this.mobileAudioElement) {
+    if (this.isMobileDevice() && 'audioSession' in navigator) {
       try {
-        this.mobileAudioElement.pause();
-        this.mobileAudioElement.srcObject = null;
-        if (this.mobileAudioElement.parentNode) {
-          this.mobileAudioElement.parentNode.removeChild(this.mobileAudioElement);
-        }
+        navigator.audioSession.type = 'auto';
       } catch (e) {}
-      this.mobileAudioElement = null;
     }
-    this.mediaDest = null;
 
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
       try {

@@ -510,13 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.5-fancy-icon-and-custom-title"
+	const AppVersion = "2.4.6-mobile-feedback-isolation"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
 			"audio_output":     "Adaptive Routing (Mobile Loudspeaker 3.6x / Desktop Clean 1.15x)",
+			"isolation":        "Hardware Half-Duplex Acoustic Feedback Isolation",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})
