@@ -205,7 +205,7 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
           this.openAuthModal('login');
           const errorBox = document.getElementById('authErrorMsg');
           if (errorBox) {
-            errorBox.innerHTML = `<strong>A Google bejelentkezés még nincs beállítva a szerveren.</strong><br>Kérlek regisztrálj vagy jelentkezz be alább az email címeddel!<br><small>Az <code>attila.hitb@gmail.com</code>, <code>attila.private@gmail.com</code> és <code>colin.hunwald@gmail.com</code> címek azonnal Rendszergazda jogot kapnak.</small>`;
+            errorBox.innerHTML = `<strong>A Google bejelentkezés még nincs beállítva a szerveren.</strong><br>Kérlek regisztrálj vagy jelentkezz be alább az email címeddel!<br><small>Az <code>attila.hitb@gmail.com</code> és <code>attila.private@gmail.com</code> címek azonnal Rendszergazda jogot kapnak.</small>`;
             errorBox.style.display = 'block';
           }
         } else {
@@ -1120,7 +1120,7 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
 
       tbody.innerHTML = users
         .map((u) => {
-          const isPrimaryAdmin = u.email === 'attila.hitb@gmail.com' || u.email === 'attila.private@gmail.com' || u.email === 'colin.hunwald@gmail.com';
+          const isPrimaryAdmin = u.email === 'attila.hitb@gmail.com' || u.email === 'attila.private@gmail.com';
           const authBadge = u.auth_provider === 'google' ? '🌐 Google' : '🔑 Email';
           const todayMin = Math.round((u.today_duration_sec || 0) / 60);
           const totalUserMin = Math.round((u.total_duration_sec || 0) / 60);

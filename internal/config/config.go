@@ -90,7 +90,6 @@ func LoadConfig() *Config {
 	defaultAdmins := []string{
 		"attila.hitb@gmail.com",
 		"attila.private@gmail.com",
-		"colin.hunwald@gmail.com",
 	}
 	adminMap := make(map[string]bool)
 	var adminEmails []string
