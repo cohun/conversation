@@ -17,9 +17,10 @@ class AudioCallManager {
     // Audio & State
     this.ws = null;
     this.audioCtx = null;
+    this.outputGain = null;
+    this.compressor = null;
     this.micStream = null;
     this.workletNode = null;
-    this.recognition = null;
     this.isMuted = false;
     this.state = 'connecting'; // connecting | listening | speaking | thinking | ended
 
@@ -29,9 +30,9 @@ class AudioCallManager {
     this.nextPlayTime = 0;
     this.isAiSpeaking = false;
 
-    // Turn buffer & Speech recognition helper
-    this.pendingTranscript = '';
-    this.resetSpeechRecognitionTranscript = null;
+    // VAD (Voice Activity Detection) auto turn-taking
+    this.hasUserSpoken = false;
+    this.autoPassTimer = null;
 
     // Timer
     this.startTime = null;
@@ -58,6 +59,20 @@ class AudioCallManager {
         await this.audioCtx.resume();
       }
 
+      // Master output amplifier & dynamics compressor for loud, clear phone loudspeaker playback
+      this.outputGain = this.audioCtx.createGain();
+      this.outputGain.gain.setValueAtTime(2.2, this.audioCtx.currentTime); // 2.2x volume boost for mobile speakers
+
+      this.compressor = this.audioCtx.createDynamicsCompressor();
+      this.compressor.threshold.setValueAtTime(-24, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(30, this.audioCtx.currentTime);
+      this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
+      this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+      this.compressor.release.setValueAtTime(0.25, this.audioCtx.currentTime);
+
+      this.outputGain.connect(this.compressor);
+      this.compressor.connect(this.audioCtx.destination);
+
       // Request microphone access
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -76,7 +91,7 @@ class AudioCallManager {
 
         // Handle audio chunks from worklet
         this.workletNode.port.onmessage = (event) => {
-          const { pcm } = event.data;
+          const { pcm, rms } = event.data;
           if (!pcm) return;
 
           // Suppress mic transmission while AI is speaking or muted
@@ -91,6 +106,30 @@ class AudioCallManager {
               data: base64Audio,
             }));
           }
+
+          // Automatic Voice Activity Detection (VAD) turn-taking
+          if (this.state === 'listening' && !this.isMuted && !this.isAiSpeaking) {
+            if (rms > 0.02) {
+              // User is speaking
+              this.hasUserSpoken = true;
+              if (this.autoPassTimer) {
+                clearTimeout(this.autoPassTimer);
+                this.autoPassTimer = null;
+              }
+            } else if (this.hasUserSpoken && rms < 0.012) {
+              // User finished speaking and paused for 1.7 seconds
+              if (!this.autoPassTimer) {
+                this.autoPassTimer = setTimeout(() => {
+                  if (this.state === 'listening' && this.hasUserSpoken && !this.isAiSpeaking) {
+                    console.log('[AudioCall] Auto turn-pass triggered after speech pause.');
+                    this.hasUserSpoken = false;
+                    this.autoPassTimer = null;
+                    this.passTurn();
+                  }
+                }, 1700);
+              }
+            }
+          }
         };
 
         sourceNode.connect(this.workletNode);
@@ -102,9 +141,6 @@ class AudioCallManager {
         console.warn('[AudioCall] AudioWorklet init notice:', workletErr);
       }
 
-      // Initialize Speech Recognition for conversational turns
-      this.initSpeechRecognition();
-
       // Connect WebSocket
       this.connectWebSocket();
 
@@ -112,81 +148,6 @@ class AudioCallManager {
       console.error('[AudioCall] Startup error:', err);
       this.onError('Microphone or Audio initialization failed: ' + (err.message || err));
       this.endCall();
-    }
-  }
-
-  initSpeechRecognition() {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      console.log('[AudioCall] Native SpeechRecognition not available in this browser.');
-      return;
-    }
-
-    try {
-      this.recognition = new SpeechRec();
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
-
-      let sessionTranscript = '';
-
-      this.resetSpeechRecognitionTranscript = () => {
-        sessionTranscript = '';
-        this.pendingTranscript = '';
-      };
-
-      this.recognition.onresult = (event) => {
-        // While muted or AI is speaking, ignore microphone speech to prevent feedback
-        if (this.isMuted || this.isAiSpeaking) return;
-
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            sessionTranscript += ' ' + event.results[i][0].transcript;
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-
-        const fullSpoken = (sessionTranscript + ' ' + interim).trim();
-        if (fullSpoken) {
-          this.pendingTranscript = fullSpoken;
-        }
-      };
-
-      this.recognition.onerror = (event) => {
-        if (event.error === 'not-allowed') {
-          console.warn('[AudioCall] SpeechRecognition permission denied');
-          try {
-            this.recognition.abort();
-          } catch (e) {}
-          this.recognition = null;
-          return;
-        }
-        if (event.error === 'network') {
-          console.warn('[AudioCall] SpeechRecognition network timeout - auto-restarting in 1s...');
-          return;
-        }
-        if (event.error !== 'no-speech') {
-          console.warn('[AudioCall] SpeechRecognition notice:', event.error);
-        }
-      };
-
-      this.recognition.onend = () => {
-        if (this.state !== 'ended' && this.recognition) {
-          setTimeout(() => {
-            if (this.state !== 'ended' && this.recognition) {
-              try {
-                this.recognition.start();
-              } catch (e) {}
-            }
-          }, 800);
-        }
-      };
-
-      this.recognition.start();
-    } catch (e) {
-      console.warn('[AudioCall] SpeechRecognition startup notice:', e);
     }
   }
 
@@ -377,7 +338,13 @@ class AudioCallManager {
 
     const source = this.audioCtx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.audioCtx.destination);
+    
+    // Connect to master output amplifier (2.2x gain + compressor)
+    if (this.outputGain) {
+      source.connect(this.outputGain);
+    } else {
+      source.connect(this.audioCtx.destination);
+    }
 
     source.start(this.nextPlayTime);
     this.nextPlayTime += buffer.duration;
@@ -397,6 +364,12 @@ class AudioCallManager {
   }
 
   flushAudioQueue() {
+    if (this.autoPassTimer) {
+      clearTimeout(this.autoPassTimer);
+      this.autoPassTimer = null;
+    }
+    this.hasUserSpoken = false;
+
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -421,14 +394,16 @@ class AudioCallManager {
       clearTimeout(this.thinkingTimer);
       this.thinkingTimer = null;
     }
+    if (this.autoPassTimer) {
+      clearTimeout(this.autoPassTimer);
+      this.autoPassTimer = null;
+    }
+    this.hasUserSpoken = false;
+
     this.isAiSpeaking = speaking;
     if (speaking) {
       this.setState('speaking');
     } else {
-      this.pendingTranscript = '';
-      if (this.resetSpeechRecognitionTranscript) {
-        this.resetSpeechRecognitionTranscript();
-      }
       if (this.state === 'speaking' || this.state === 'thinking') {
         this.setState('listening');
       }
@@ -441,6 +416,12 @@ class AudioCallManager {
   }
 
   passTurn() {
+    if (this.autoPassTimer) {
+      clearTimeout(this.autoPassTimer);
+      this.autoPassTimer = null;
+    }
+    this.hasUserSpoken = false;
+
     if (this.isAiSpeaking) {
       // If AI is currently speaking, pressing this button triggers manual Interrupt!
       this.manualInterrupt();
@@ -448,11 +429,6 @@ class AudioCallManager {
     }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const textToSend = (this.pendingTranscript || '').trim();
-      this.pendingTranscript = '';
-      if (this.resetSpeechRecognitionTranscript) {
-        this.resetSpeechRecognitionTranscript();
-      }
       this.setState('thinking');
       if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
       this.thinkingTimer = setTimeout(() => {
@@ -463,7 +439,7 @@ class AudioCallManager {
       }, 18000);
       this.ws.send(JSON.stringify({
         type: 'pass_turn',
-        text: textToSend,
+        text: '',
       }));
     }
   }
@@ -508,12 +484,11 @@ class AudioCallManager {
 
     this.flushAudioQueue();
 
-    if (this.recognition) {
-      try {
-        this.recognition.stop();
-        this.recognition = null;
-      } catch (e) {}
+    if (this.autoPassTimer) {
+      clearTimeout(this.autoPassTimer);
+      this.autoPassTimer = null;
     }
+    this.hasUserSpoken = false;
 
     if (this.ws) {
       try {

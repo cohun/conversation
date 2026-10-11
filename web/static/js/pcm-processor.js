@@ -5,7 +5,9 @@ class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.targetSampleRate = 16000;
-    this.buffer = [];
+    this.chunkSize = 1600; // 100ms at 16kHz
+    this.buffer = new Int16Array(this.chunkSize);
+    this.bufferIndex = 0;
     this.isMuted = false;
 
     this.port.onmessage = (event) => {
@@ -38,18 +40,22 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Resample to 16kHz
     const resampled = this.downsample(channelData, inputSampleRate, this.targetSampleRate);
 
-    // Convert Float32 [-1.0, 1.0] to Int16 [-32768, 32767]
-    const pcm16 = new Int16Array(resampled.length);
+    // Convert Float32 [-1.0, 1.0] to Int16 and batch into 100ms chunks
     for (let i = 0; i < resampled.length; i++) {
       let s = Math.max(-1, Math.min(1, resampled[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
+      const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      this.buffer[this.bufferIndex++] = sample16;
 
-    // Send Int16 buffer and RMS energy to main thread
-    this.port.postMessage({
-      pcm: pcm16.buffer,
-      rms: rms
-    }, [pcm16.buffer]);
+      if (this.bufferIndex >= this.chunkSize) {
+        // Send full 100ms chunk (3200 bytes) and current RMS energy
+        const pcmCopy = new Int16Array(this.buffer);
+        this.port.postMessage({
+          pcm: pcmCopy.buffer,
+          rms: rms
+        }, [pcmCopy.buffer]);
+        this.bufferIndex = 0;
+      }
+    }
 
     return true;
   }
