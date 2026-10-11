@@ -1292,11 +1292,14 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       muteBtn.classList.remove('active');
       document.getElementById('muteLabel').textContent = 'Némítás';
 
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
+
       const speakerBtn = document.getElementById('speakerBtn');
       if (speakerBtn) {
         speakerBtn.classList.add('active');
         const speakerLabel = document.getElementById('speakerLabel');
-        if (speakerLabel) speakerLabel.textContent = 'Kihangosító';
+        if (speakerLabel) speakerLabel.textContent = isMobile ? 'Kihangosító' : 'Hangszóró';
       }
 
       // Start Audio Call Manager
@@ -1429,6 +1432,11 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
 
     toggleCallSpeaker() {
       if (!this.currentCall) return;
+      const isMobile = this.currentCall.isMobileDevice();
+      if (!isMobile) {
+        this.showCallToast('Asztali gépen a hangszóró / fejhallgató aktív 💻 (1.15x kényelmes hangerő)');
+        return;
+      }
       const isSpeaker = this.currentCall.toggleSpeakerphone();
       const speakerBtn = document.getElementById('speakerBtn');
       const speakerLabel = document.getElementById('speakerLabel');
@@ -1438,7 +1446,7 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       if (speakerLabel) {
         speakerLabel.textContent = isSpeaker ? 'Kihangosító' : 'Fülhallgató';
       }
-      this.showCallToast(isSpeaker ? 'Kihangosító bekapcsolva 🔊' : 'Normál / Fülhallgató mód 👂');
+      this.showCallToast(isSpeaker ? 'Kihangosító bekapcsolva 🔊 (Hangos)' : 'Fülhallgató / Kagyló mód 👂 (Privát)');
     },
 
     passCallTurn() {

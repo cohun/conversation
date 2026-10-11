@@ -510,13 +510,13 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.3-mobile-speakerphone"
+	const AppVersion = "2.4.4-adaptive-speaker-routing"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
-			"audio_output":     "Dynamic Loudspeaker Routing (HTML5 MediaStream for Mobile / Direct for Desktop, 4.0x Gain)",
+			"audio_output":     "Adaptive Routing (Mobile Loudspeaker 3.6x / Desktop Clean 1.15x)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})

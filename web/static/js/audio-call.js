@@ -59,6 +59,31 @@ class AudioCallManager {
       (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
   }
 
+  ensureMobileAudioElement() {
+    if (!this.audioCtx) return null;
+    if (!this.mediaDest && this.audioCtx.createMediaStreamDestination) {
+      this.mediaDest = this.audioCtx.createMediaStreamDestination();
+    }
+    if (!this.mobileAudioElement) {
+      let el = document.getElementById('antigravityMobileAudio');
+      if (!el) {
+        el = document.createElement('audio');
+        el.id = 'antigravityMobileAudio';
+        el.setAttribute('playsinline', 'true');
+        el.setAttribute('webkit-playsinline', 'true');
+        el.setAttribute('autoplay', 'true');
+        el.style.display = 'none';
+        document.body.appendChild(el);
+      }
+      this.mobileAudioElement = el;
+    }
+    if (this.mediaDest && this.mobileAudioElement.srcObject !== this.mediaDest.stream) {
+      this.mobileAudioElement.srcObject = this.mediaDest.stream;
+    }
+    this.mobileAudioElement.volume = 1.0;
+    return this.mobileAudioElement;
+  }
+
   applyAudioRouting() {
     if (!this.compressor || !this.audioCtx) return;
 
@@ -75,49 +100,24 @@ class AudioCallManager {
       // Piping Web Audio into an HTML5 <audio playsinline autoplay> element instructs iOS and Android
       // to route output to the main bottom LOUDSPEAKER (Speakerphone / STREAM_MUSIC).
       // CRITICAL: The compressor connects ONLY to mediaDest (NOT audioCtx.destination), completely preventing any duplicate voice echo!
-      try {
-        if (!this.mediaDest) {
-          this.mediaDest = this.audioCtx.createMediaStreamDestination();
-        }
-        if (!this.mobileAudioElement) {
-          this.mobileAudioElement = document.createElement('audio');
-          this.mobileAudioElement.setAttribute('playsinline', 'true');
-          this.mobileAudioElement.setAttribute('webkit-playsinline', 'true');
-          this.mobileAudioElement.setAttribute('autoplay', 'true');
-          this.mobileAudioElement.style.display = 'none';
-          document.body.appendChild(this.mobileAudioElement);
-        }
-        this.mobileAudioElement.srcObject = this.mediaDest.stream;
+      const el = this.ensureMobileAudioElement();
+      if (el && this.mediaDest) {
+        el.muted = false;
         this.compressor.connect(this.mediaDest);
-
-        // Resume/play audio element inside the active gesture context
-        const playPromise = this.mobileAudioElement.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn('[AudioCall] mobileAudioElement.play notice:', err);
-            // Fallback to direct destination if element play fails
-            try {
-              this.compressor.disconnect();
-              this.compressor.connect(this.audioCtx.destination);
-            } catch (e) {}
-          });
-        }
+        el.play().catch((err) => {
+          console.warn('[AudioCall] mobileAudioElement.play notice (will resume on user tap/speech):', err.name);
+        });
         console.log('[AudioCall] 🔊 Audio route: Mobile Loudspeaker (MediaStreamDestination -> <audio>)');
         return;
-      } catch (err) {
-        console.warn('[AudioCall] Failed to set up mobile loudspeaker route, falling back:', err);
       }
     }
 
     // === DIRECT ROUTE (Desktop or Earpiece mode) ===
     if (this.mobileAudioElement) {
-      try {
-        this.mobileAudioElement.pause();
-        this.mobileAudioElement.srcObject = null;
-      } catch (e) {}
+      this.mobileAudioElement.muted = true; // Mute instead of detaching srcObject to prevent AbortError!
     }
     this.compressor.connect(this.audioCtx.destination);
-    console.log('[AudioCall] 🎧 Audio route: Direct AudioContext Destination');
+    console.log(`[AudioCall] 🎧 Audio route: Direct AudioContext Destination (${isMobile ? 'Earpiece' : 'Desktop'})`);
   }
 
   toggleSpeakerphone() {
@@ -135,6 +135,7 @@ class AudioCallManager {
   async start() {
     try {
       this.setState('connecting');
+      const isMobile = this.isMobileDevice();
 
       // 1. AudioSession setup for iOS Safari 16.4+
       if ('audioSession' in navigator) {
@@ -153,23 +154,38 @@ class AudioCallManager {
       }
 
       // 3. Master output amplifier & dynamics compressor
-      // Single, direct audio path (loud 4.0x boost with distortion limiter)
+      // Desktop: 1.15x gain (comfortable, clean listening volume for headphones/speakers, not blasting!)
+      // Mobile: 3.6x gain (loud speakerphone for phone loudspeaker)
+      const targetGain = isMobile ? 3.6 : 1.15;
       this.outputGain = this.audioCtx.createGain();
-      this.outputGain.gain.setValueAtTime(4.0, this.audioCtx.currentTime);
+      this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
-      this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
-      this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
-      this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
-      this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
+      if (isMobile) {
+        this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
+        this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
+        this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
+        this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+        this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
+      } else {
+        this.compressor.threshold.setValueAtTime(-10, this.audioCtx.currentTime);
+        this.compressor.knee.setValueAtTime(15, this.audioCtx.currentTime);
+        this.compressor.ratio.setValueAtTime(3, this.audioCtx.currentTime);
+        this.compressor.attack.setValueAtTime(0.01, this.audioCtx.currentTime);
+        this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
+      }
 
       this.outputGain.connect(this.compressor);
 
-      // Connect to appropriate output route (Loudspeaker for mobile, Direct for desktop)
-      this.applyAudioRouting();
+      // 4. Pre-create and unlock Mobile Loudspeaker <audio> element DURING user gesture!
+      if (isMobile && this.audioCtx.createMediaStreamDestination) {
+        this.ensureMobileAudioElement();
+        if (this.mobileAudioElement) {
+          this.mobileAudioElement.play().catch(() => {});
+        }
+      }
 
-      // 4. Request microphone access without aggressive noise gating
+      // 5. Request microphone access without aggressive noise gating
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -179,17 +195,18 @@ class AudioCallManager {
         },
       });
 
-      // Re-assert play-and-record on iOS Safari if needed after mic stream is acquired
+      // 6. Apply final audio routing AFTER getUserMedia completes and OS audio route settles!
       if ('audioSession' in navigator) {
         try {
           navigator.audioSession.type = 'play-and-record';
         } catch (e) {}
       }
+      this.applyAudioRouting();
 
-      // 5. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
+      // 7. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
       await this.initMicrophoneCapture();
 
-      // 6. Connect WebSocket to server proxy
+      // 8. Connect WebSocket to server proxy
       this.connectWebSocket();
 
     } catch (err) {
@@ -205,7 +222,7 @@ class AudioCallManager {
     // Attempt 1: Modern AudioWorklet
     if (this.audioCtx.audioWorklet) {
       try {
-        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.3');
+        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.4');
         const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
@@ -540,6 +557,13 @@ class AudioCallManager {
       this.nextPlayTime = now + 0.03;
     }
 
+    // Guarantee mobile audio element is actively playing whenever speech arrives
+    if (this.isMobileDevice() && this.isSpeakerphone && this.mobileAudioElement) {
+      if (this.mobileAudioElement.paused) {
+        this.mobileAudioElement.play().catch(() => {});
+      }
+    }
+
     const source = this.audioCtx.createBufferSource();
     source.buffer = buffer;
 
@@ -620,6 +644,13 @@ class AudioCallManager {
   }
 
   passTurn() {
+    // Prime mobile loudspeaker element inside user gesture so it is guaranteed awake for Sarah's reply!
+    if (this.isMobileDevice() && this.isSpeakerphone && this.mobileAudioElement) {
+      if (this.mobileAudioElement.paused) {
+        this.mobileAudioElement.play().catch(() => {});
+      }
+    }
+
     // Check if AI is genuinely speaking with active audio nodes in queue
     const isActuallyPlaying = this.isAiSpeaking && this.activeSourceNodes.length > 0;
     if (isActuallyPlaying) {
