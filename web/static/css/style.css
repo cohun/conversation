@@ -922,8 +922,9 @@ body {
 .call-action-row {
   width: 100%;
   display: flex;
-  justify-content: space-between;
+  justify-content: space-around;
   align-items: center;
+  gap: 8px;
 }
 
 .call-control-btn {
@@ -939,8 +940,8 @@ body {
 }
 
 .call-control-circle {
-  width: 54px;
-  height: 54px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -959,6 +960,19 @@ body {
 }
 
 .call-control-btn.active .call-control-circle {
+  background: var(--terracotta-500);
+  color: #fff;
+  border-color: var(--terracotta-500);
+}
+
+.call-control-btn.speaker-btn.active .call-control-circle {
+  background: var(--sage-500);
+  color: #fff;
+  border-color: var(--sage-500);
+  box-shadow: 0 0 14px var(--sage-glow);
+}
+
+.call-control-btn.mute-btn.active .call-control-circle {
   background: var(--terracotta-500);
   color: #fff;
   border-color: var(--terracotta-500);

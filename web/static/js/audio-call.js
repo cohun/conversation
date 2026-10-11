@@ -20,10 +20,12 @@ class AudioCallManager {
     this.audioCtx = null;
     this.outputGain = null;
     this.compressor = null;
+    this.mediaDest = null;
+    this.mobileAudioElement = null;
+    this.isSpeakerphone = true; // Default to loudspeaker on mobile devices
     this.micStream = null;
     this.workletNode = null;
     this.scriptProcessorNode = null;
-    this.mobileAudioElement = null;
     this.isMuted = false;
     this.state = 'connecting'; // connecting | listening | speaking | thinking | ended
 
@@ -52,19 +54,106 @@ class AudioCallManager {
     }
   }
 
+  isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
+  }
+
+  applyAudioRouting() {
+    if (!this.compressor || !this.audioCtx) return;
+
+    // Disconnect compressor from ALL outputs first to guarantee NO double playback or chorus echo!
+    try {
+      this.compressor.disconnect();
+    } catch (e) {}
+
+    const isMobile = this.isMobileDevice();
+
+    if (this.isSpeakerphone && isMobile && this.audioCtx.createMediaStreamDestination) {
+      // === MOBILE LOUDSPEAKER ROUTE ===
+      // On mobile phones (iOS Safari & Android Chrome), direct audioCtx.destination routes to the phone earpiece (receiver).
+      // Piping Web Audio into an HTML5 <audio playsinline autoplay> element instructs iOS and Android
+      // to route output to the main bottom LOUDSPEAKER (Speakerphone / STREAM_MUSIC).
+      // CRITICAL: The compressor connects ONLY to mediaDest (NOT audioCtx.destination), completely preventing any duplicate voice echo!
+      try {
+        if (!this.mediaDest) {
+          this.mediaDest = this.audioCtx.createMediaStreamDestination();
+        }
+        if (!this.mobileAudioElement) {
+          this.mobileAudioElement = document.createElement('audio');
+          this.mobileAudioElement.setAttribute('playsinline', 'true');
+          this.mobileAudioElement.setAttribute('webkit-playsinline', 'true');
+          this.mobileAudioElement.setAttribute('autoplay', 'true');
+          this.mobileAudioElement.style.display = 'none';
+          document.body.appendChild(this.mobileAudioElement);
+        }
+        this.mobileAudioElement.srcObject = this.mediaDest.stream;
+        this.compressor.connect(this.mediaDest);
+
+        // Resume/play audio element inside the active gesture context
+        const playPromise = this.mobileAudioElement.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((err) => {
+            console.warn('[AudioCall] mobileAudioElement.play notice:', err);
+            // Fallback to direct destination if element play fails
+            try {
+              this.compressor.disconnect();
+              this.compressor.connect(this.audioCtx.destination);
+            } catch (e) {}
+          });
+        }
+        console.log('[AudioCall] 🔊 Audio route: Mobile Loudspeaker (MediaStreamDestination -> <audio>)');
+        return;
+      } catch (err) {
+        console.warn('[AudioCall] Failed to set up mobile loudspeaker route, falling back:', err);
+      }
+    }
+
+    // === DIRECT ROUTE (Desktop or Earpiece mode) ===
+    if (this.mobileAudioElement) {
+      try {
+        this.mobileAudioElement.pause();
+        this.mobileAudioElement.srcObject = null;
+      } catch (e) {}
+    }
+    this.compressor.connect(this.audioCtx.destination);
+    console.log('[AudioCall] 🎧 Audio route: Direct AudioContext Destination');
+  }
+
+  toggleSpeakerphone() {
+    this.isSpeakerphone = !this.isSpeakerphone;
+    this.applyAudioRouting();
+    return this.isSpeakerphone;
+  }
+
+  setSpeakerphone(enabled) {
+    this.isSpeakerphone = !!enabled;
+    this.applyAudioRouting();
+    return this.isSpeakerphone;
+  }
+
   async start() {
     try {
       this.setState('connecting');
 
-      // 1. Initialize Web Audio Context (request native 16kHz context if supported)
+      // 1. AudioSession setup for iOS Safari 16.4+
+      if ('audioSession' in navigator) {
+        try {
+          navigator.audioSession.type = 'play-and-record';
+        } catch (asErr) {
+          console.warn('[AudioCall] navigator.audioSession notice:', asErr);
+        }
+      }
+
+      // 2. Initialize Web Audio Context (request native 16kHz context if supported)
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
 
-      // 2. Master output amplifier & dynamics compressor
-      // Single, direct, zero-delay audio path to speakers (loud 4.0x boost with distortion limiter)
+      // 3. Master output amplifier & dynamics compressor
+      // Single, direct audio path (loud 4.0x boost with distortion limiter)
       this.outputGain = this.audioCtx.createGain();
       this.outputGain.gain.setValueAtTime(4.0, this.audioCtx.currentTime);
 
@@ -76,9 +165,11 @@ class AudioCallManager {
       this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
 
       this.outputGain.connect(this.compressor);
-      this.compressor.connect(this.audioCtx.destination);
 
-      // 3. Request microphone access without aggressive noise gating
+      // Connect to appropriate output route (Loudspeaker for mobile, Direct for desktop)
+      this.applyAudioRouting();
+
+      // 4. Request microphone access without aggressive noise gating
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -88,10 +179,17 @@ class AudioCallManager {
         },
       });
 
-      // 4. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
+      // Re-assert play-and-record on iOS Safari if needed after mic stream is acquired
+      if ('audioSession' in navigator) {
+        try {
+          navigator.audioSession.type = 'play-and-record';
+        } catch (e) {}
+      }
+
+      // 5. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
       await this.initMicrophoneCapture();
 
-      // 5. Connect WebSocket to server proxy
+      // 6. Connect WebSocket to server proxy
       this.connectWebSocket();
 
     } catch (err) {
@@ -107,7 +205,7 @@ class AudioCallManager {
     // Attempt 1: Modern AudioWorklet
     if (this.audioCtx.audioWorklet) {
       try {
-        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.2');
+        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.3');
         const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
@@ -619,6 +717,18 @@ class AudioCallManager {
       } catch (e) {}
       this.workletNode = null;
     }
+
+    if (this.mobileAudioElement) {
+      try {
+        this.mobileAudioElement.pause();
+        this.mobileAudioElement.srcObject = null;
+        if (this.mobileAudioElement.parentNode) {
+          this.mobileAudioElement.parentNode.removeChild(this.mobileAudioElement);
+        }
+      } catch (e) {}
+      this.mobileAudioElement = null;
+    }
+    this.mediaDest = null;
 
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
       try {

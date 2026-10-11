@@ -179,6 +179,10 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
 
       // Call Screen Controls
       document.getElementById('muteBtn').addEventListener('click', () => this.toggleCallMute());
+      const speakerBtn = document.getElementById('speakerBtn');
+      if (speakerBtn) {
+        speakerBtn.addEventListener('click', () => this.toggleCallSpeaker());
+      }
       document.getElementById('passTurnBtn').addEventListener('click', () => this.passCallTurn());
       document.getElementById('pulseCoreOrb').addEventListener('click', () => this.passCallTurn());
       document.getElementById('bookmarkBtn').addEventListener('click', () => this.bookmarkCallTopic());
@@ -1283,10 +1287,17 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       overlay.classList.add('active');
       this.updateCallVisualState('connecting');
 
-      // Reset mute button
+      // Reset mute & speaker buttons
       const muteBtn = document.getElementById('muteBtn');
       muteBtn.classList.remove('active');
-      document.getElementById('muteLabel').textContent = 'Mute';
+      document.getElementById('muteLabel').textContent = 'Némítás';
+
+      const speakerBtn = document.getElementById('speakerBtn');
+      if (speakerBtn) {
+        speakerBtn.classList.add('active');
+        const speakerLabel = document.getElementById('speakerLabel');
+        if (speakerLabel) speakerLabel.textContent = 'Kihangosító';
+      }
 
       // Start Audio Call Manager
       this.currentCall = new AudioCallManager({
@@ -1413,7 +1424,21 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       const muteBtn = document.getElementById('muteBtn');
       const muteLabel = document.getElementById('muteLabel');
       muteBtn.classList.toggle('active', isMuted);
-      muteLabel.textContent = isMuted ? 'Unmute' : 'Mute';
+      muteLabel.textContent = isMuted ? 'Mikrofon Be' : 'Némítás';
+    },
+
+    toggleCallSpeaker() {
+      if (!this.currentCall) return;
+      const isSpeaker = this.currentCall.toggleSpeakerphone();
+      const speakerBtn = document.getElementById('speakerBtn');
+      const speakerLabel = document.getElementById('speakerLabel');
+      if (speakerBtn) {
+        speakerBtn.classList.toggle('active', isSpeaker);
+      }
+      if (speakerLabel) {
+        speakerLabel.textContent = isSpeaker ? 'Kihangosító' : 'Fülhallgató';
+      }
+      this.showCallToast(isSpeaker ? 'Kihangosító bekapcsolva 🔊' : 'Normál / Fülhallgató mód 👂');
     },
 
     passCallTurn() {

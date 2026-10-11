@@ -221,14 +221,26 @@
       <div class="call-bottom-controls">
         <div class="call-action-row">
           <!-- Mute Button -->
-          <button id="muteBtn" class="call-control-btn" title="Toggle Mute">
+          <button id="muteBtn" class="call-control-btn mute-btn" title="Némítás (Mute)">
             <div class="call-control-circle">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
               </svg>
             </div>
-            <span id="muteLabel" class="call-control-label">Mute</span>
+            <span id="muteLabel" class="call-control-label">Némítás</span>
+          </button>
+
+          <!-- Speakerphone Button ("Kihangosító") -->
+          <button id="speakerBtn" class="call-control-btn speaker-btn active" title="Kihangosító (Hangszóró)">
+            <div class="call-control-circle">
+              <svg id="speakerIcon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+              </svg>
+            </div>
+            <span id="speakerLabel" class="call-control-label">Kihangosító</span>
           </button>
 
           <!-- Pass Turn / Interrupt ("Átadom a szót" / "Félbeszakítás") -->
@@ -248,7 +260,7 @@
                 <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path>
               </svg>
             </div>
-            <span class="call-control-label">Bookmark</span>
+            <span class="call-control-label">Téma mentése</span>
           </button>
         </div>
 
@@ -595,7 +607,7 @@
 
   </div>
 
-  <script src="/js/audio-call.js?v=2.4.2"></script>
-  <script src="/js/app.js?v=2.4.2"></script>
+  <script src="/js/audio-call.js?v=2.4.3"></script>
+  <script src="/js/app.js?v=2.4.3"></script>
 </body>
 </html>
