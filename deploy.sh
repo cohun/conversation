@@ -30,10 +30,10 @@ gcloud run deploy "$SERVICE_NAME" \
   --region "$REGION" \
   --allow-unauthenticated \
   --timeout "$TIMEOUT" \
-  --max-instances 2 \
+  --max-instances 1 \
   --memory 512Mi \
   --cpu 1 \
-  --set-env-vars GEMINI_API_KEY="${GEMINI_API_KEY}",GEMINI_LIVE_MODEL="auto",DB_PATH="/data/app.db"
+  --set-env-vars GEMINI_API_KEY="${GEMINI_API_KEY}",GEMINI_LIVE_MODEL="auto",DB_PATH="/data/app.db",ADMIN_EMAILS="attila.private@gmail.com,attila.hitb@gmail.com",SESSION_SECRET="antigravity-english-teacher-session-secret-attila-2026"
 
 echo "=========================================================="
 echo " Deployment Complete! Service URL:"
