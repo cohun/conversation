@@ -538,8 +538,11 @@ func (d *DB) EnsureAdminEmails(adminEmails []string) error {
 				if strings.Contains(p.DisplayName, ".") || strings.Contains(p.DisplayName, "_") {
 					clean := strings.ReplaceAll(p.DisplayName, ".", " ")
 					clean = strings.ReplaceAll(clean, "_", " ")
-					clean = strings.Title(strings.TrimSpace(clean))
-					_ = d.UpdateUserProfile(user.ID, clean, clean)
+					phonetic := p.PhoneticNote
+					if phonetic == "" {
+						phonetic = clean
+					}
+					_ = d.UpdateUserProfile(user.ID, clean, phonetic)
 				}
 			}
 		}

@@ -43,8 +43,8 @@ type RollingLiveSession struct {
 	isStudentSpeaking bool
 	isProcessingTurn  bool
 	droppingAudio     bool
-	lastTurnTime      time.Time
-	userAudioBuffer   []gemini.LiveBlob
+	lastTurnTime          time.Time
+	userAudioChunksInTurn int
 }
 
 func newRollingLiveSession(
@@ -224,7 +224,7 @@ func (s *RollingLiveSession) handleClientInterrupt() {
 	s.isStudentSpeaking = false
 	s.isProcessingTurn = false
 	s.droppingAudio = true
-	s.userAudioBuffer = nil
+	s.userAudioChunksInTurn = 0
 	s.activityMu.Unlock()
 
 	// 1. Tell browser audio has stopped immediately
@@ -334,7 +334,7 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 				s.isAiSpeaking = false
 				s.isProcessingTurn = false
 				s.droppingAudio = false
-				s.userAudioBuffer = nil
+				s.userAudioChunksInTurn = 0
 				s.lastTurnTime = time.Now()
 				s.activityMu.Unlock()
 
@@ -469,68 +469,47 @@ func (s *RollingLiveSession) Run() {
 		case "audio":
 			if clientMsg.Data != "" {
 				s.activityMu.Lock()
-				// Only buffer student speech when AI is not speaking and no turn is actively processing
-				if !s.isAiSpeaking && !s.isProcessingTurn {
-					s.userAudioBuffer = append(s.userAudioBuffer, gemini.LiveBlob{
-						MimeType: "audio/pcm;rate=16000",
-						Data:     clientMsg.Data,
-					})
-					// Cap buffer at 45 seconds of speech (450 * 100ms)
-					if len(s.userAudioBuffer) > 450 {
-						s.userAudioBuffer = s.userAudioBuffer[len(s.userAudioBuffer)-450:]
-					}
+				canStream := !s.isAiSpeaking && !s.isProcessingTurn
+				if canStream {
+					s.userAudioChunksInTurn++
 				}
 				s.activityMu.Unlock()
+
+				if canStream {
+					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+						RealtimeInput: &gemini.LiveRealtimeInput{
+							MediaChunks: []gemini.LiveBlob{
+								{
+									MimeType: "audio/pcm;rate=16000",
+									Data:     clientMsg.Data,
+								},
+							},
+						},
+					})
+				}
 			}
 
 		case "pass_turn":
 			s.activityMu.Lock()
 			s.isProcessingTurn = true
 			s.droppingAudio = false
-			chunksToSend := s.userAudioBuffer
-			s.userAudioBuffer = nil
+			chunksSent := s.userAudioChunksInTurn
+			s.userAudioChunksInTurn = 0
 			turnStartTime := time.Now()
 			s.lastTurnTime = turnStartTime
 			s.activityMu.Unlock()
 
-			if len(chunksToSend) > 0 {
-				log.Printf("[RollingSession] 📤 Streaming %d buffered audio chunks to Gemini upon pass_turn...", len(chunksToSend))
-				for _, chunk := range chunksToSend {
-					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-						RealtimeInput: &gemini.LiveRealtimeInput{
-							MediaChunks: []gemini.LiveBlob{chunk},
-						},
-					})
-				}
-				passMsg := gemini.LiveClientMessage{
+			var passMsg gemini.LiveClientMessage
+			if chunksSent > 0 {
+				log.Printf("[RollingSession] 🎯 pass_turn received (%d audio chunks streamed): committing turn to Gemini...", chunksSent)
+				passMsg = gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						TurnComplete: true,
 					},
 				}
-				if err := s.sendToActiveGemini(passMsg); err != nil {
-					log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
-					if rErr := s.doRollover(ctx); rErr == nil {
-						_ = s.sendToActiveGemini(passMsg)
-					}
-				} else {
-					// Turn Watchdog: If Gemini gives zero response after 12s, auto-recover seamlessly!
-					go func(sentTime time.Time, retryMsg gemini.LiveClientMessage) {
-						time.Sleep(12 * time.Second)
-						s.activityMu.Lock()
-						stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
-						s.activityMu.Unlock()
-
-						if stalled {
-							log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s). Seamlessly refreshing connection and retrying turn...")
-							if rErr := s.doRollover(ctx); rErr == nil {
-								_ = s.sendToActiveGemini(retryMsg)
-							}
-						}
-					}(turnStartTime, passMsg)
-				}
 			} else {
-				log.Printf("[RollingSession] ℹ️ Empty audio buffer on pass_turn. Sending text prompt...")
-				passMsg := gemini.LiveClientMessage{
+				log.Printf("[RollingSession] ℹ️ Zero audio chunks on pass_turn. Sending gentle prompt to Gemini...")
+				passMsg = gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						Turns: []gemini.LiveContent{
 							{
@@ -543,8 +522,11 @@ func (s *RollingLiveSession) Run() {
 						TurnComplete: true,
 					},
 				}
-				if err := s.sendToActiveGemini(passMsg); err != nil {
-					log.Printf("[RollingSession] Error writing prompt to Gemini: %v", err)
+			}
+			if err := s.sendToActiveGemini(passMsg); err != nil {
+				log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
+				if rErr := s.doRollover(ctx); rErr == nil {
+					_ = s.sendToActiveGemini(passMsg)
 				}
 			}
 

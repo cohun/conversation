@@ -483,24 +483,6 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 			_ = h.database.UpdateUserRole(user.ID, "admin")
 			_ = h.database.UpdateUserStatus(user.ID, "active")
 		}
-
-		// If Google provides a real human name (e.g. "Horváth Attila"), update profile if current name is an email placeholder
-		if googleName != "" {
-			p, pErr := h.database.GetUserProfile(user.ID)
-			if pErr == nil && p != nil {
-				curName := strings.TrimSpace(p.DisplayName)
-				prefixClean := strings.ReplaceAll(strings.Split(email, "@")[0], ".", "")
-				curClean := strings.ToLower(strings.ReplaceAll(curName, " ", ""))
-				isPlaceholder := curClean == prefixClean || strings.Contains(strings.ToLower(curName), "private") || strings.Contains(curName, ".") || curName == "Alex"
-				if isPlaceholder || curName == "" {
-					phonetic := p.PhoneticNote
-					if phonetic == "" || phonetic == curName || strings.Contains(phonetic, "Private") {
-						phonetic = googleName
-					}
-					_ = h.database.UpdateUserProfile(user.ID, googleName, phonetic)
-				}
-			}
-		}
 	}
 
 	// Create session
