@@ -391,6 +391,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         const name = rawName.replace(/[._-]/g, ' ').replace(/\s+/g, ' ').trim();
         const initial = name.charAt(0).toUpperCase();
 
+        // Dynamic Brand Title: [User Name]'s Live English Companion
+        const brandTitle = document.getElementById('brandTitle');
+        if (brandTitle) {
+          brandTitle.textContent = `${name}'s Live English Companion`;
+        }
+        document.title = `${name}'s Live English Companion`;
+
         // Screen routing based on account status
         if (this.currentUser.status === 'pending') {
           // Welcome / Waiting screen: hide active learning dashboard and status bar
@@ -511,6 +518,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         if (activeDashboard) activeDashboard.style.display = 'block';
         if (pendingScreen) pendingScreen.style.display = 'none';
         if (blockedScreen) blockedScreen.style.display = 'none';
+
+        // Reset Brand Title for guest
+        const brandTitle = document.getElementById('brandTitle');
+        if (brandTitle) {
+          brandTitle.textContent = 'Live English Companion';
+        }
+        document.title = 'Live English Companion';
 
         document.getElementById('userDisplayName').textContent = 'Vendég 👋';
         document.getElementById('userAvatarBadge').textContent = 'V';

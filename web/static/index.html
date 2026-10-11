@@ -3,11 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>English Teacher & Conversational Companion</title>
+  <title>Live English Companion</title>
   <meta name="description" content="Voice-first English learning and companion phone calls powered by Gemini Multimodal Live API.">
   <meta name="theme-color" content="#fcf9f5">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="English Companion">
+  
+  <!-- Home Screen & Favicon Assets -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-precomposed.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -16,15 +25,11 @@
     <header class="app-header">
       <div class="brand-section">
         <div class="brand-logo-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="22"></line>
-          </svg>
+          <img src="/favicon.png" alt="App Icon" width="36" height="36">
         </div>
         <div>
-          <h1 class="brand-title">Antigravity Live</h1>
-          <p class="brand-sub">English Companion</p>
+          <h1 id="brandTitle" class="brand-title">Live English Companion</h1>
+          <p id="brandSub" class="brand-sub">Personal AI Speaking Tutor</p>
         </div>
       </div>
       <div class="header-actions">
@@ -607,7 +612,7 @@
 
   </div>
 
-  <script src="/js/audio-call.js?v=2.4.4"></script>
-  <script src="/js/app.js?v=2.4.4"></script>
+  <script src="/js/audio-call.js?v=2.4.5"></script>
+  <script src="/js/app.js?v=2.4.5"></script>
 </body>
 </html>

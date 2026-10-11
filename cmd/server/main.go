@@ -510,7 +510,7 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.4-adaptive-speaker-routing"
+	const AppVersion = "2.4.5-fancy-icon-and-custom-title"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
