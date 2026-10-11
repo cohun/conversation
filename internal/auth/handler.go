@@ -459,13 +459,17 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		status = "active"
 	}
 
+	googleName := strings.TrimSpace(googleUser.Name)
+	if googleName == "" {
+		parts := strings.Split(email, "@")
+		clean := strings.ReplaceAll(parts[0], ".", " ")
+		clean = strings.ReplaceAll(clean, "_", " ")
+		googleName = strings.Title(strings.TrimSpace(clean))
+	}
+
 	if user == nil {
 		// New user from Google
-		name := strings.TrimSpace(googleUser.Name)
-		if name == "" {
-			name = strings.Title(strings.Split(email, "@")[0])
-		}
-		user, err = h.database.CreateUser(email, "", "google", googleUser.ID, role, status, name)
+		user, err = h.database.CreateUser(email, "", "google", googleUser.ID, role, status, googleName)
 		if err != nil {
 			http.Redirect(w, r, "/?auth_error=create_user_failed", http.StatusTemporaryRedirect)
 			return
@@ -478,6 +482,24 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		if h.cfg.IsAdminEmail(email) {
 			_ = h.database.UpdateUserRole(user.ID, "admin")
 			_ = h.database.UpdateUserStatus(user.ID, "active")
+		}
+
+		// If Google provides a real human name (e.g. "Horváth Attila"), update profile if current name is an email placeholder
+		if googleName != "" {
+			p, pErr := h.database.GetUserProfile(user.ID)
+			if pErr == nil && p != nil {
+				curName := strings.TrimSpace(p.DisplayName)
+				prefixClean := strings.ReplaceAll(strings.Split(email, "@")[0], ".", "")
+				curClean := strings.ToLower(strings.ReplaceAll(curName, " ", ""))
+				isPlaceholder := curClean == prefixClean || strings.Contains(strings.ToLower(curName), "private") || strings.Contains(curName, ".") || curName == "Alex"
+				if isPlaceholder || curName == "" {
+					phonetic := p.PhoneticNote
+					if phonetic == "" || phonetic == curName || strings.Contains(phonetic, "Private") {
+						phonetic = googleName
+					}
+					_ = h.database.UpdateUserProfile(user.ID, googleName, phonetic)
+				}
+			}
 		}
 	}
 
