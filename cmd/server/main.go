@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +20,35 @@ import (
 	"english-teacher-app/internal/gemini"
 	"english-teacher-app/internal/ws"
 )
+
+type ringLogBuffer struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+func newRingLogBuffer(max int) *ringLogBuffer {
+	return &ringLogBuffer{max: max, lines: make([]string, 0, max)}
+}
+
+func (r *ringLogBuffer) Write(p []byte) (n int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	msg := strings.TrimRight(string(p), "\r\n")
+	if len(r.lines) >= r.max {
+		r.lines = r.lines[1:]
+	}
+	r.lines = append(r.lines, msg)
+	return len(p), nil
+}
+
+func (r *ringLogBuffer) GetAll() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make([]string, len(r.lines))
+	copy(cp, r.lines)
+	return cp
+}
 
 func maskKey(k string) string {
 	k = strings.TrimSpace(k)
@@ -79,6 +110,9 @@ func findStaticDir() string {
 
 func main() {
 	cfg := config.LoadConfig()
+
+	logRing := newRingLogBuffer(300)
+	log.SetOutput(io.MultiWriter(os.Stderr, logRing))
 
 	log.Printf("[Server] Initializing database at %s...", cfg.DBPath)
 	database, err := db.InitDB(cfg.DBPath)
@@ -476,15 +510,23 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.0-continuous-pcm"
+	const AppVersion = "2.4.1-clean-audio"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
-			"loudspeaker_mode": "MediaStreamDestination + Gain 4.0x",
+			"audio_output":     "Direct AudioContext Destination (Zero Echo)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
+	})
+
+	// Debug Server Logs: Inspect live server logs in memory
+	mux.HandleFunc("GET /api/debug/logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		for _, l := range logRing.GetAll() {
+			_, _ = fmt.Fprintln(w, l)
+		}
 	})
 
 	// Debug Test Voice Endpoint: runs an automated live simulated call directly against Gemini Live

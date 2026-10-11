@@ -8,6 +8,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.chunkSize = 1600; // 100ms at 16kHz
     this.buffer = new Int16Array(this.chunkSize);
     this.bufferIndex = 0;
+    this.chunkSumSquares = 0.0;
     this.isMuted = false;
     this.phase = 0.0;
 
@@ -31,25 +32,21 @@ class PCMProcessor extends AudioWorkletProcessor {
     const channelData = input[0]; // mono Float32 [-1.0, 1.0]
     const inputSampleRate = sampleRate; // global in AudioWorklet
 
-    // Calculate RMS energy
-    let sum = 0;
-    for (let i = 0; i < channelData.length; i++) {
-      sum += channelData[i] * channelData[i];
-    }
-    const rms = Math.sqrt(sum / channelData.length);
-
     // Fast path: if audioContext is already 16kHz, direct conversion with 0 resampling
     if (inputSampleRate === this.targetSampleRate) {
       for (let i = 0; i < channelData.length; i++) {
         let s = Math.max(-1, Math.min(1, channelData[i]));
+        this.chunkSumSquares += s * s;
         const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
         this.buffer[this.bufferIndex++] = sample16;
 
         if (this.bufferIndex >= this.chunkSize) {
+          const chunkRms = Math.sqrt(this.chunkSumSquares / this.chunkSize);
+          this.chunkSumSquares = 0.0;
           const pcmCopy = new Int16Array(this.buffer);
           this.port.postMessage({
             pcm: pcmCopy.buffer,
-            rms: rms,
+            rms: chunkRms,
           }, [pcmCopy.buffer]);
           this.bufferIndex = 0;
         }
@@ -66,14 +63,17 @@ class PCMProcessor extends AudioWorkletProcessor {
       const s = channelData[i0] + frac * (channelData[i1] - channelData[i0]);
 
       const clamped = Math.max(-1, Math.min(1, s));
+      this.chunkSumSquares += clamped * clamped;
       const sample16 = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
       this.buffer[this.bufferIndex++] = sample16;
 
       if (this.bufferIndex >= this.chunkSize) {
+        const chunkRms = Math.sqrt(this.chunkSumSquares / this.chunkSize);
+        this.chunkSumSquares = 0.0;
         const pcmCopy = new Int16Array(this.buffer);
         this.port.postMessage({
           pcm: pcmCopy.buffer,
-          rms: rms,
+          rms: chunkRms,
         }, [pcmCopy.buffer]);
         this.bufferIndex = 0;
       }

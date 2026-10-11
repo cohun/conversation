@@ -58,49 +58,25 @@ class AudioCallManager {
 
       // 1. Initialize Web Audio Context (request native 16kHz context if supported)
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      try {
-        this.audioCtx = new AudioContextClass({ latencyHint: 'interactive', sampleRate: 16000 });
-      } catch (e) {
-        this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
-      }
+      this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
 
-      // 2. Master output amplifier & dynamics compressor for loud, clear phone loudspeaker playback
-      // 4.0x volume boost + compressor for loud mobile speakerphone output without distortion
+      // 2. Master output amplifier & dynamics compressor
+      // Single, direct, zero-delay audio path to speakers (eliminates dual-voice chorus echo)
       this.outputGain = this.audioCtx.createGain();
-      this.outputGain.gain.setValueAtTime(4.0, this.audioCtx.currentTime);
+      this.outputGain.gain.setValueAtTime(2.2, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-16, this.audioCtx.currentTime);
-      this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
-      this.compressor.ratio.setValueAtTime(14, this.audioCtx.currentTime);
-      this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
-      this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
+      this.compressor.threshold.setValueAtTime(-14, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(20, this.audioCtx.currentTime);
+      this.compressor.ratio.setValueAtTime(4, this.audioCtx.currentTime);
+      this.compressor.attack.setValueAtTime(0.005, this.audioCtx.currentTime);
+      this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
 
       this.outputGain.connect(this.compressor);
       this.compressor.connect(this.audioCtx.destination);
-
-      // Mobile loudspeaker assist: Route through HTML5 Audio element with MediaStreamDestination
-      // This forces iOS and Android to switch output from the phone earpiece to the main speakerphone!
-      try {
-        if (this.audioCtx.createMediaStreamDestination) {
-          const mediaDest = this.audioCtx.createMediaStreamDestination();
-          this.compressor.connect(mediaDest);
-          if (!this.mobileAudioElement) {
-            this.mobileAudioElement = document.createElement('audio');
-            this.mobileAudioElement.setAttribute('playsinline', 'true');
-            this.mobileAudioElement.setAttribute('autoplay', 'true');
-            this.mobileAudioElement.style.display = 'none';
-            document.body.appendChild(this.mobileAudioElement);
-          }
-          this.mobileAudioElement.srcObject = mediaDest.stream;
-          this.mobileAudioElement.play().catch(() => {});
-        }
-      } catch (mobileRouteErr) {
-        console.warn('[AudioCall] Mobile loudspeaker routing notice:', mobileRouteErr);
-      }
 
       // 3. Request microphone access without aggressive noise gating
       this.micStream = await navigator.mediaDevices.getUserMedia({
@@ -131,7 +107,7 @@ class AudioCallManager {
     // Attempt 1: Modern AudioWorklet
     if (this.audioCtx.audioWorklet) {
       try {
-        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.0');
+        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.1');
         const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
@@ -169,29 +145,26 @@ class AudioCallManager {
       const pcmBuffer = new Int16Array(chunkSize);
       let pcmIndex = 0;
       let spPhase = 0.0;
+      let spChunkSumSquares = 0.0;
 
       scriptNode.onaudioprocess = (e) => {
         if (this.isMuted) return;
         const inputData = e.inputBuffer.getChannelData(0);
         const inputSampleRate = this.audioCtx.sampleRate;
 
-        // Calculate RMS
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
-        }
-        const rms = Math.sqrt(sum / inputData.length);
-
         // Fast path: direct copy if native 16kHz
         if (inputSampleRate === targetSampleRate) {
           for (let i = 0; i < inputData.length; i++) {
             let s = Math.max(-1, Math.min(1, inputData[i]));
+            spChunkSumSquares += s * s;
             const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
             pcmBuffer[pcmIndex++] = sample16;
 
             if (pcmIndex >= chunkSize) {
+              const chunkRms = Math.sqrt(spChunkSumSquares / chunkSize);
+              spChunkSumSquares = 0.0;
               const chunkToSend = new Int16Array(pcmBuffer);
-              this.handleMicPcmChunk(chunkToSend.buffer, rms);
+              this.handleMicPcmChunk(chunkToSend.buffer, chunkRms);
               pcmIndex = 0;
             }
           }
@@ -207,12 +180,15 @@ class AudioCallManager {
           const s = inputData[i0] + frac * (inputData[i1] - inputData[i0]);
 
           const clamped = Math.max(-1, Math.min(1, s));
+          spChunkSumSquares += clamped * clamped;
           const sample16 = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
           pcmBuffer[pcmIndex++] = sample16;
 
           if (pcmIndex >= chunkSize) {
+            const chunkRms = Math.sqrt(spChunkSumSquares / chunkSize);
+            spChunkSumSquares = 0.0;
             const chunkToSend = new Int16Array(pcmBuffer);
-            this.handleMicPcmChunk(chunkToSend.buffer, rms);
+            this.handleMicPcmChunk(chunkToSend.buffer, chunkRms);
             pcmIndex = 0;
           }
 
