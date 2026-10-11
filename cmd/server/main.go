@@ -510,13 +510,13 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.1-clean-audio"
+	const AppVersion = "2.4.2-buffered-audio-turn"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
-			"audio_output":     "Direct AudioContext Destination (Zero Echo)",
+			"audio_output":     "Direct AudioContext Destination (4.0x Volume Boost)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})

@@ -64,16 +64,16 @@ class AudioCallManager {
       }
 
       // 2. Master output amplifier & dynamics compressor
-      // Single, direct, zero-delay audio path to speakers (eliminates dual-voice chorus echo)
+      // Single, direct, zero-delay audio path to speakers (loud 4.0x boost with distortion limiter)
       this.outputGain = this.audioCtx.createGain();
-      this.outputGain.gain.setValueAtTime(2.2, this.audioCtx.currentTime);
+      this.outputGain.gain.setValueAtTime(4.0, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-14, this.audioCtx.currentTime);
-      this.compressor.knee.setValueAtTime(20, this.audioCtx.currentTime);
-      this.compressor.ratio.setValueAtTime(4, this.audioCtx.currentTime);
-      this.compressor.attack.setValueAtTime(0.005, this.audioCtx.currentTime);
-      this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
+      this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
+      this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
+      this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+      this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
 
       this.outputGain.connect(this.compressor);
       this.compressor.connect(this.audioCtx.destination);
@@ -107,7 +107,7 @@ class AudioCallManager {
     // Attempt 1: Modern AudioWorklet
     if (this.audioCtx.audioWorklet) {
       try {
-        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.1');
+        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.2');
         const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
