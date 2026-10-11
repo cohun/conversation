@@ -383,8 +383,9 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
         }
 
         // Display name & avatar initial
-        const name = this.currentUser.display_name || this.currentUser.name || this.currentUser.email.split('@')[0];
-        const initial = name.trim().charAt(0).toUpperCase();
+        const rawName = this.currentUser.display_name || this.currentUser.name || this.currentUser.email.split('@')[0];
+        const name = rawName.replace(/[._-]/g, ' ').replace(/\s+/g, ' ').trim();
+        const initial = name.charAt(0).toUpperCase();
 
         // Screen routing based on account status
         if (this.currentUser.status === 'pending') {

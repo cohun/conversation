@@ -517,8 +517,12 @@ func (d *DB) EnsureAdminEmails(adminEmails []string) error {
 		}
 
 		if user == nil {
-			// Pre-create admin user
-			namePart := strings.Title(strings.Split(email, "@")[0])
+			// Pre-create admin user with clean human display name
+			namePart := strings.Split(email, "@")[0]
+			namePart = strings.ReplaceAll(namePart, ".", " ")
+			namePart = strings.ReplaceAll(namePart, "_", " ")
+			namePart = strings.ReplaceAll(namePart, "-", " ")
+			namePart = strings.Title(strings.TrimSpace(namePart))
 			_, err = d.CreateUser(email, "", "google", "", "admin", "active", namePart)
 			if err != nil {
 				return err
@@ -528,6 +532,15 @@ func (d *DB) EnsureAdminEmails(adminEmails []string) error {
 			if user.Role != "admin" || user.Status != "active" {
 				_ = d.UpdateUserRole(user.ID, "admin")
 				_ = d.UpdateUserStatus(user.ID, "active")
+			}
+			// Clean up any legacy dot-separated display name in profile
+			if p, pErr := d.GetUserProfile(user.ID); pErr == nil && p != nil {
+				if strings.Contains(p.DisplayName, ".") || strings.Contains(p.DisplayName, "_") {
+					clean := strings.ReplaceAll(p.DisplayName, ".", " ")
+					clean = strings.ReplaceAll(clean, "_", " ")
+					clean = strings.Title(strings.TrimSpace(clean))
+					_ = d.UpdateUserProfile(user.ID, clean, clean)
+				}
 			}
 		}
 	}

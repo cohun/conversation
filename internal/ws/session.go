@@ -38,11 +38,12 @@ type RollingLiveSession struct {
 	turns     []TurnRecord
 
 	// Activity tracking to perform rollovers during natural conversational pauses
-	activityMu       sync.Mutex
-	isAiSpeaking     bool
-	isProcessingTurn bool
-	droppingAudio    bool
-	lastTurnTime     time.Time
+	activityMu        sync.Mutex
+	isAiSpeaking      bool
+	isStudentSpeaking bool
+	isProcessingTurn  bool
+	droppingAudio     bool
+	lastTurnTime      time.Time
 }
 
 func newRollingLiveSession(
@@ -219,6 +220,7 @@ func (s *RollingLiveSession) rolloverTickerLoop(ctx context.Context, interval ti
 func (s *RollingLiveSession) handleClientInterrupt() {
 	s.activityMu.Lock()
 	s.isAiSpeaking = false
+	s.isStudentSpeaking = false
 	s.isProcessingTurn = false
 	s.droppingAudio = true
 	s.activityMu.Unlock()
@@ -303,6 +305,7 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 			if serverMsg.ServerContent.ModelTurn != nil {
 				s.activityMu.Lock()
 				s.isAiSpeaking = true
+				s.isStudentSpeaking = false
 				s.activityMu.Unlock()
 
 				for _, part := range serverMsg.ServerContent.ModelTurn.Parts {
@@ -462,6 +465,21 @@ func (s *RollingLiveSession) Run() {
 		switch clientMsg.Type {
 		case "audio":
 			if clientMsg.Data != "" {
+				s.activityMu.Lock()
+				shouldSendStart := !s.isStudentSpeaking && !s.isAiSpeaking
+				if shouldSendStart {
+					s.isStudentSpeaking = true
+				}
+				s.activityMu.Unlock()
+
+				if shouldSendStart {
+					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+						RealtimeInput: &gemini.LiveRealtimeInput{
+							ActivityStart: &gemini.LiveActivityStart{},
+						},
+					})
+				}
+
 				inputMsg := gemini.LiveClientMessage{
 					RealtimeInput: &gemini.LiveRealtimeInput{
 						MediaChunks: []gemini.LiveBlob{
@@ -479,30 +497,22 @@ func (s *RollingLiveSession) Run() {
 			s.activityMu.Lock()
 			s.isProcessingTurn = true
 			s.droppingAudio = false
+			wasSpeaking := s.isStudentSpeaking
+			s.isStudentSpeaking = false
 			turnStartTime := time.Now()
 			s.lastTurnTime = turnStartTime
 			s.activityMu.Unlock()
 
-			rawUserText := strings.TrimSpace(clientMsg.Text)
-			var userTextForGemini string
-			if rawUserText == "" {
-				userTextForGemini = "[The student has finished speaking their turn. If you heard what they said via audio, respond directly following your 3-phase teaching cycle. If their audio was silent or unclear, gently check in by asking: 'I didn't quite catch that, could you repeat that for me?']"
-				s.recordTurn("Student ("+s.profile.DisplayName+")", "[Spoken turn]")
-			} else {
-				userTextForGemini = rawUserText
-				s.recordTurn("Student ("+s.profile.DisplayName+")", rawUserText)
+			if wasSpeaking {
+				_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+					RealtimeInput: &gemini.LiveRealtimeInput{
+						ActivityEnd: &gemini.LiveActivityEnd{},
+					},
+				})
 			}
 
 			passMsg := gemini.LiveClientMessage{
 				ClientContent: &gemini.LiveClientContent{
-					Turns: []gemini.LiveContent{
-						{
-							Role: "user",
-							Parts: []gemini.LivePart{
-								{Text: userTextForGemini},
-							},
-						},
-					},
 					TurnComplete: true,
 				},
 			}
