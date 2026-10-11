@@ -30,10 +30,6 @@ class AudioCallManager {
     this.nextPlayTime = 0;
     this.isAiSpeaking = false;
 
-    // VAD (Voice Activity Detection) auto turn-taking
-    this.hasUserSpoken = false;
-    this.autoPassTimer = null;
-
     // Timer
     this.startTime = null;
     this.timerInterval = null;
@@ -105,30 +101,6 @@ class AudioCallManager {
               type: 'audio',
               data: base64Audio,
             }));
-          }
-
-          // Automatic Voice Activity Detection (VAD) turn-taking
-          if (this.state === 'listening' && !this.isMuted && !this.isAiSpeaking) {
-            if (rms > 0.02) {
-              // User is speaking
-              this.hasUserSpoken = true;
-              if (this.autoPassTimer) {
-                clearTimeout(this.autoPassTimer);
-                this.autoPassTimer = null;
-              }
-            } else if (this.hasUserSpoken && rms < 0.012) {
-              // User finished speaking and paused for 1.7 seconds
-              if (!this.autoPassTimer) {
-                this.autoPassTimer = setTimeout(() => {
-                  if (this.state === 'listening' && this.hasUserSpoken && !this.isAiSpeaking) {
-                    console.log('[AudioCall] Auto turn-pass triggered after speech pause.');
-                    this.hasUserSpoken = false;
-                    this.autoPassTimer = null;
-                    this.passTurn();
-                  }
-                }, 1700);
-              }
-            }
           }
         };
 
@@ -364,12 +336,6 @@ class AudioCallManager {
   }
 
   flushAudioQueue() {
-    if (this.autoPassTimer) {
-      clearTimeout(this.autoPassTimer);
-      this.autoPassTimer = null;
-    }
-    this.hasUserSpoken = false;
-
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -394,11 +360,6 @@ class AudioCallManager {
       clearTimeout(this.thinkingTimer);
       this.thinkingTimer = null;
     }
-    if (this.autoPassTimer) {
-      clearTimeout(this.autoPassTimer);
-      this.autoPassTimer = null;
-    }
-    this.hasUserSpoken = false;
 
     this.isAiSpeaking = speaking;
     if (speaking) {
@@ -416,12 +377,6 @@ class AudioCallManager {
   }
 
   passTurn() {
-    if (this.autoPassTimer) {
-      clearTimeout(this.autoPassTimer);
-      this.autoPassTimer = null;
-    }
-    this.hasUserSpoken = false;
-
     if (this.isAiSpeaking) {
       // If AI is currently speaking, pressing this button triggers manual Interrupt!
       this.manualInterrupt();
@@ -483,12 +438,6 @@ class AudioCallManager {
     }
 
     this.flushAudioQueue();
-
-    if (this.autoPassTimer) {
-      clearTimeout(this.autoPassTimer);
-      this.autoPassTimer = null;
-    }
-    this.hasUserSpoken = false;
 
     if (this.ws) {
       try {
