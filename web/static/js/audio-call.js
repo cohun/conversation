@@ -1,5 +1,5 @@
 // Antigravity Voice Call Manager
-// Handles Web Audio API, AudioWorklet (16kHz PCM), 24kHz PCM Playback, Speech Synthesis & Recognition, WebSocket, and Barge-In
+// Handles Web Audio API, AudioWorklet (16kHz PCM), ScriptProcessor Fallback, 24kHz PCM Playback, Speech Synthesis, WebSocket, and Turn-Taking
 
 class AudioCallManager {
   constructor(options = {}) {
@@ -10,6 +10,7 @@ class AudioCallManager {
     // Callbacks
     this.onStateChange = options.onStateChange || (() => {});
     this.onTimerUpdate = options.onTimerUpdate || (() => {});
+    this.onAudioActivity = options.onAudioActivity || (() => {});
     this.onTopicSaved = options.onTopicSaved || (() => {});
     this.onError = options.onError || (() => {});
     this.onCallEnded = options.onCallEnded || (() => {});
@@ -21,14 +22,21 @@ class AudioCallManager {
     this.compressor = null;
     this.micStream = null;
     this.workletNode = null;
+    this.scriptProcessorNode = null;
+    this.mobileAudioElement = null;
     this.isMuted = false;
     this.state = 'connecting'; // connecting | listening | speaking | thinking | ended
 
     // Playback state
-    this.playbackQueue = [];
     this.activeSourceNodes = [];
     this.nextPlayTime = 0;
     this.isAiSpeaking = false;
+    this.turnCompletionTimer = null;
+    this.thinkingTimer = null;
+
+    // Mic statistics
+    this.sentAudioChunkCount = 0;
+    this.lastMicLogTime = 0;
 
     // Timer
     this.startTime = null;
@@ -48,28 +56,41 @@ class AudioCallManager {
     try {
       this.setState('connecting');
 
-      // Initialize Web Audio Context
+      // 1. Initialize Web Audio Context
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
 
-      // Master output amplifier & dynamics compressor for loud, clear phone loudspeaker playback
+      // 2. Master output amplifier & dynamics compressor for loud, clear phone loudspeaker playback
+      // 3.2x volume boost + compressor for loud mobile speakerphone output without distortion
       this.outputGain = this.audioCtx.createGain();
-      this.outputGain.gain.setValueAtTime(2.2, this.audioCtx.currentTime); // 2.2x volume boost for mobile speakers
+      this.outputGain.gain.setValueAtTime(3.2, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-24, this.audioCtx.currentTime);
-      this.compressor.knee.setValueAtTime(30, this.audioCtx.currentTime);
-      this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
+      this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
+      this.compressor.ratio.setValueAtTime(10, this.audioCtx.currentTime);
       this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
-      this.compressor.release.setValueAtTime(0.25, this.audioCtx.currentTime);
+      this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
 
       this.outputGain.connect(this.compressor);
       this.compressor.connect(this.audioCtx.destination);
 
-      // Request microphone access
+      // Mobile loudspeaker assist: keep a dummy playsinline audio element active
+      try {
+        if (!this.mobileAudioElement) {
+          this.mobileAudioElement = document.createElement('audio');
+          this.mobileAudioElement.setAttribute('playsinline', 'true');
+          this.mobileAudioElement.setAttribute('autoplay', 'true');
+          this.mobileAudioElement.muted = true;
+          this.mobileAudioElement.style.display = 'none';
+          document.body.appendChild(this.mobileAudioElement);
+        }
+      } catch (e) {}
+
+      // 3. Request microphone access
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -79,29 +100,32 @@ class AudioCallManager {
         },
       });
 
-      // Load PCM downsampler AudioWorklet
+      // 4. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
+      await this.initMicrophoneCapture();
+
+      // 5. Connect WebSocket to server proxy
+      this.connectWebSocket();
+
+    } catch (err) {
+      console.error('[AudioCall] Startup error:', err);
+      this.onError('Mikrofon vagy hang inicializálási hiba: ' + (err.message || err));
+      this.endCall();
+    }
+  }
+
+  async initMicrophoneCapture() {
+    let workletInitialized = false;
+
+    // Attempt 1: Modern AudioWorklet
+    if (this.audioCtx.audioWorklet) {
       try {
         await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js');
         const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
-        // Handle audio chunks from worklet
         this.workletNode.port.onmessage = (event) => {
           const { pcm, rms } = event.data;
-          if (!pcm) return;
-
-          // Suppress mic transmission while AI is speaking or muted
-          // This completely cuts speaker bleed feedback to the microphone
-          if (this.isAiSpeaking || this.isMuted) return;
-
-          // Send 16kHz PCM audio chunk to WebSocket
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            const base64Audio = this.arrayBufferToBase64(pcm);
-            this.ws.send(JSON.stringify({
-              type: 'audio',
-              data: base64Audio,
-            }));
-          }
+          this.handleMicPcmChunk(pcm, rms);
         };
 
         sourceNode.connect(this.workletNode);
@@ -109,17 +133,104 @@ class AudioCallManager {
         silentGain.gain.value = 0;
         this.workletNode.connect(silentGain);
         silentGain.connect(this.audioCtx.destination);
+        workletInitialized = true;
+        console.log('[AudioCall] 🎙️ AudioWorklet microphone capture initialized');
       } catch (workletErr) {
-        console.warn('[AudioCall] AudioWorklet init notice:', workletErr);
+        console.warn('[AudioCall] AudioWorklet init failed, using ScriptProcessor fallback:', workletErr);
+      }
+    }
+
+    // Attempt 2: Bulletproof ScriptProcessor Fallback (guaranteed to work across all mobile/desktop browsers)
+    if (!workletInitialized) {
+      this.initScriptProcessorFallback();
+    }
+  }
+
+  initScriptProcessorFallback() {
+    try {
+      const bufferSize = 2048;
+      const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+      const scriptNode = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
+
+      const targetSampleRate = 16000;
+      const chunkSize = 1600; // 100ms at 16kHz
+      const pcmBuffer = new Int16Array(chunkSize);
+      let pcmIndex = 0;
+
+      scriptNode.onaudioprocess = (e) => {
+        if (this.isMuted) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        const inputSampleRate = this.audioCtx.sampleRate;
+
+        // Calculate RMS
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+
+        // Downsample to 16kHz
+        const ratio = inputSampleRate / targetSampleRate;
+        const outLength = Math.round(inputData.length / ratio);
+
+        for (let i = 0; i < outLength; i++) {
+          const srcIndex = Math.min(inputData.length - 1, Math.round(i * ratio));
+          let s = Math.max(-1, Math.min(1, inputData[srcIndex]));
+          const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          pcmBuffer[pcmIndex++] = sample16;
+
+          if (pcmIndex >= chunkSize) {
+            const chunkToSend = new Int16Array(pcmBuffer);
+            this.handleMicPcmChunk(chunkToSend.buffer, rms);
+            pcmIndex = 0;
+          }
+        }
+      };
+
+      sourceNode.connect(scriptNode);
+      const silentGain = this.audioCtx.createGain();
+      silentGain.gain.value = 0;
+      scriptNode.connect(silentGain);
+      silentGain.connect(this.audioCtx.destination);
+      this.scriptProcessorNode = scriptNode;
+      console.log('[AudioCall] 🎙️ ScriptProcessor fallback microphone capture active');
+    } catch (spErr) {
+      console.error('[AudioCall] Failed to initialize ScriptProcessor fallback:', spErr);
+    }
+  }
+
+  handleMicPcmChunk(pcm, rms) {
+    if (!pcm) return;
+    if (this.isMuted) return;
+
+    // Auto-clear stale isAiSpeaking if no audio is actually playing in the queue
+    if (this.isAiSpeaking && this.activeSourceNodes.length === 0) {
+      this.setAiSpeaking(false);
+      this.setState('listening');
+    }
+
+    // Suppress mic transmission while AI is actively speaking through speakers to eliminate feedback echo
+    if (this.isAiSpeaking) return;
+
+    // Send 16kHz PCM audio chunk to WebSocket
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const base64Audio = this.arrayBufferToBase64(pcm);
+      this.ws.send(JSON.stringify({
+        type: 'audio',
+        data: base64Audio,
+      }));
+
+      this.sentAudioChunkCount++;
+      const now = Date.now();
+      if (!this.lastMicLogTime || now - this.lastMicLogTime > 2000) {
+        console.log(`[AudioCall] 🎙️ Mic streaming: ${this.sentAudioChunkCount} chunks streamed (RMS: ${rms.toFixed(3)})`);
+        this.lastMicLogTime = now;
       }
 
-      // Connect WebSocket
-      this.connectWebSocket();
-
-    } catch (err) {
-      console.error('[AudioCall] Startup error:', err);
-      this.onError('Microphone or Audio initialization failed: ' + (err.message || err));
-      this.endCall();
+      // Visual feedback callback for orb pulsation
+      if (this.onAudioActivity) {
+        this.onAudioActivity(rms);
+      }
     }
   }
 
@@ -150,7 +261,7 @@ class AudioCallManager {
 
     this.ws.onerror = (err) => {
       console.error('[AudioCall] WebSocket error:', err);
-      this.onError('Connection error to voice server.');
+      this.onError('Kapcsolati hiba a hangkiszolgálóhoz.');
     };
 
     this.ws.onclose = (event) => {
@@ -191,6 +302,17 @@ class AudioCallManager {
         if (this.activeSourceNodes.length === 0) {
           this.setAiSpeaking(false);
           this.setState('listening');
+          console.log('[AudioCall] 👂 Turn complete: listening to student.');
+        } else {
+          // If audio chunks are still playing out of the speaker, schedule guaranteed release!
+          const remainingSec = Math.max(0.05, this.nextPlayTime - this.audioCtx.currentTime);
+          if (this.turnCompletionTimer) clearTimeout(this.turnCompletionTimer);
+          this.turnCompletionTimer = setTimeout(() => {
+            this.activeSourceNodes = [];
+            this.setAiSpeaking(false);
+            this.setState('listening');
+            console.log('[AudioCall] 👂 Audio queue playback completed. Listening to student!');
+          }, Math.ceil((remainingSec + 0.1) * 1000));
         }
         break;
 
@@ -206,7 +328,7 @@ class AudioCallManager {
     }
   }
 
-  // Explicit manual interrupt triggered only by user button press
+  // Explicit manual interrupt triggered only when user taps while partner is speaking
   manualInterrupt() {
     console.log('[AudioCall] Manual interrupt requested by user button');
     this.flushAudioQueue();
@@ -221,7 +343,7 @@ class AudioCallManager {
     this.manualInterrupt();
   }
 
-  // Speak text using Web Speech API synthesis
+  // Speak text using Web Speech API synthesis (fallback)
   speakText(rawText) {
     if (!('speechSynthesis' in window)) {
       console.warn('[AudioCall] SpeechSynthesis not supported in browser');
@@ -229,7 +351,6 @@ class AudioCallManager {
     }
     this.flushAudioQueue();
 
-    // Clean text of markdown formatting (asterisks, hashtags, quotes) for clean spoken output
     const cleanText = rawText
       .replace(/#{1,6}\s*/g, '')
       .replace(/\*\*/g, '')
@@ -243,10 +364,9 @@ class AudioCallManager {
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'en-US';
-    utterance.rate = 0.96; // calm, natural teacher pace
+    utterance.rate = 0.96;
     utterance.pitch = 1.05;
 
-    // Pick best natural English voice
     let voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) {
       voices = this.cachedVoices || [];
@@ -314,8 +434,8 @@ class AudioCallManager {
 
     const source = this.audioCtx.createBufferSource();
     source.buffer = buffer;
-    
-    // Connect to master output amplifier (2.2x gain + compressor)
+
+    // Connect to master output amplifier (3.2x gain + compressor)
     if (this.outputGain) {
       source.connect(this.outputGain);
     } else {
@@ -334,12 +454,23 @@ class AudioCallManager {
         this.activeSourceNodes.splice(idx, 1);
       }
       if (this.activeSourceNodes.length === 0) {
+        if (this.turnCompletionTimer) {
+          clearTimeout(this.turnCompletionTimer);
+          this.turnCompletionTimer = null;
+        }
         this.setAiSpeaking(false);
+        this.setState('listening');
+        console.log('[AudioCall] 👂 All audio playback ended. Listening to student!');
       }
     };
   }
 
   flushAudioQueue() {
+    if (this.turnCompletionTimer) {
+      clearTimeout(this.turnCompletionTimer);
+      this.turnCompletionTimer = null;
+    }
+
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -381,13 +512,22 @@ class AudioCallManager {
   }
 
   passTurn() {
-    if (this.isAiSpeaking) {
-      // If AI is currently speaking, pressing this button triggers manual Interrupt!
+    // Check if AI is genuinely speaking with active audio nodes in queue
+    const isActuallyPlaying = this.isAiSpeaking && this.activeSourceNodes.length > 0;
+    if (isActuallyPlaying) {
       this.manualInterrupt();
       return;
     }
 
+    // Force release stale flag if present
+    if (this.isAiSpeaking) {
+      this.setAiSpeaking(false);
+    }
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log(`[AudioCall] 🎯 passTurn: passing turn to partner (chunks streamed in turn: ${this.sentAudioChunkCount})`);
+      this.sentAudioChunkCount = 0;
+
       this.setState('thinking');
       if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
       this.thinkingTimer = setTimeout(() => {
@@ -395,7 +535,8 @@ class AudioCallManager {
           console.warn('[AudioCall] Response timeout - switching back to listening');
           this.setState('listening');
         }
-      }, 18000);
+      }, 15000);
+
       this.ws.send(JSON.stringify({
         type: 'pass_turn',
         text: '',
@@ -453,6 +594,20 @@ class AudioCallManager {
     if (this.micStream) {
       this.micStream.getTracks().forEach((track) => track.stop());
       this.micStream = null;
+    }
+
+    if (this.scriptProcessorNode) {
+      try {
+        this.scriptProcessorNode.disconnect();
+      } catch (e) {}
+      this.scriptProcessorNode = null;
+    }
+
+    if (this.workletNode) {
+      try {
+        this.workletNode.disconnect();
+      } catch (e) {}
+      this.workletNode = null;
     }
 
     if (this.audioCtx && this.audioCtx.state !== 'closed') {

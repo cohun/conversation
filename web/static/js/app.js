@@ -1298,6 +1298,18 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           timerEl.textContent = `• ${formatted}`;
           timerEl.style.display = 'inline';
         },
+        onAudioActivity: (rms) => {
+          const orb = document.getElementById('pulseCoreOrb');
+          const tip = document.getElementById('callBargeInTip');
+          if (orb && this.currentCall && this.currentCall.state === 'listening') {
+            if (rms > 0.015) {
+              orb.style.boxShadow = '0 0 28px rgba(78, 124, 99, 0.7)';
+              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Ha befejezted, koppints ide: "Átadom a szót"';
+            } else {
+              orb.style.boxShadow = '';
+            }
+          }
+        },
         onTopicSaved: (topic) => {
           this.showCallToast(`Saved: "${topic.topic_title}" 🔖`);
           this.fetchTopics();
