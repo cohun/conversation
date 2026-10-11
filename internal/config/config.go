@@ -86,16 +86,31 @@ func LoadConfig() *Config {
 		liveModel = "auto"
 	}
 
+	// Default primary administrators that are always active admins even if env vars are unset
+	defaultAdmins := []string{
+		"attila.hitb@gmail.com",
+		"attila.private@gmail.com",
+		"colin.hunwald@gmail.com",
+	}
+	adminMap := make(map[string]bool)
+	var adminEmails []string
+	for _, a := range defaultAdmins {
+		if !adminMap[a] {
+			adminMap[a] = true
+			adminEmails = append(adminEmails, a)
+		}
+	}
+
 	adminEnv := os.Getenv("ADMIN_EMAILS")
 	if adminEnv == "" {
 		adminEnv = os.Getenv("ADMIN_EMAIL")
 	}
-	var adminEmails []string
 	if adminEnv != "" {
 		parts := strings.Split(adminEnv, ",")
 		for _, p := range parts {
 			trimmed := strings.ToLower(strings.TrimSpace(p))
-			if trimmed != "" {
+			if trimmed != "" && !adminMap[trimmed] {
+				adminMap[trimmed] = true
 				adminEmails = append(adminEmails, trimmed)
 			}
 		}

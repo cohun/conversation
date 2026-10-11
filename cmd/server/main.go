@@ -510,7 +510,7 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.7-cegagy-loudspeaker-teardown"
+	const AppVersion = "2.4.8-admin-accounts-sync"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
