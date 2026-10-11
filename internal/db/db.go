@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -377,13 +378,27 @@ func (d *DB) GetUserProfile(userID string) (*UserProfile, error) {
 		WHERE user_id = ? 
 		ORDER BY id DESC LIMIT 1
 	`, userID).Scan(&p.ID, &p.UserID, &p.DisplayName, &p.PhoneticNote, &p.CreatedAt)
-	if err == sql.ErrNoRows {
-		// Return default
-		return &UserProfile{
-			UserID:       userID,
-			DisplayName:  "Alex",
-			PhoneticNote: "Alex (pronounced AH-leks)",
-		}, nil
+	if err == sql.ErrNoRows || (p.DisplayName == "Alex" && userID != "default_user") {
+		var email string
+		_ = d.conn.QueryRow(`SELECT email FROM users WHERE id = ?`, userID).Scan(&email)
+		displayName := "Attila"
+		if email != "" {
+			parts := strings.Split(email, "@")
+			clean := parts[0]
+			clean = strings.ReplaceAll(clean, ".", " ")
+			clean = strings.ReplaceAll(clean, "_", " ")
+			clean = strings.ReplaceAll(clean, "-", " ")
+			displayName = strings.Title(strings.TrimSpace(clean))
+		}
+		if p.ID == 0 {
+			return &UserProfile{
+				UserID:       userID,
+				DisplayName:  displayName,
+				PhoneticNote: fmt.Sprintf("%s (pronounced %s)", displayName, displayName),
+			}, nil
+		}
+		p.DisplayName = displayName
+		return &p, nil
 	}
 	if err != nil {
 		return nil, err

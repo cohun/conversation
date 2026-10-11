@@ -475,11 +475,59 @@ func main() {
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Static Web Assets
+	// Version Info Endpoint
+	const AppVersion = "2.4.0-continuous-pcm"
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"version":          AppVersion,
+			"build_time":       time.Now().Format(time.RFC3339),
+			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
+			"loudspeaker_mode": "MediaStreamDestination + Gain 4.0x",
+			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
+		})
+	})
+
+	// Debug Test Voice Endpoint: runs an automated live simulated call directly against Gemini Live
+	mux.HandleFunc("GET /api/debug/test-voice", func(w http.ResponseWriter, r *http.Request) {
+		key := effectiveAPIKey
+		if k := r.URL.Query().Get("key"); k != "" {
+			key = k
+		}
+		if key == "" {
+			jsonError(w, http.StatusBadRequest, "No Gemini API key available on server")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		defer cancel()
+
+		model := resolver.GetEffectiveModel(key)
+		res, err := gemini.TestLiveVoiceConnection(ctx, key, model)
+		if err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]interface{}{
+				"status":  "error",
+				"version": AppVersion,
+				"error":   err.Error(),
+			})
+			return
+		}
+		res["version"] = AppVersion
+		jsonResponse(w, http.StatusOK, res)
+	})
+
+	// Static Web Assets with aggressive cache-control prevention for JS/HTML
 	staticDir := findStaticDir()
 	log.Printf("[Server] Serving static files from %s", staticDir)
 	fileServer := http.FileServer(http.Dir(staticDir))
-	mux.Handle("/", fileServer)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".html") || path == "/" {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,

@@ -64,8 +64,10 @@ func loadEnvFile(path string) {
 }
 
 func LoadConfig() *Config {
-	// Automatically load .env file if it exists in the working directory
+	// Automatically load .env file if it exists in current or parent directory
 	loadEnvFile(".env")
+	loadEnvFile("../.env")
+	loadEnvFile("../../.env")
 
 	port := os.Getenv("PORT")
 	if port == "" {

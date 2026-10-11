@@ -1,5 +1,5 @@
 // PCM Processor AudioWorklet
-// Downsamples input audio from audioContext.sampleRate to 16,000 Hz 16-bit linear PCM
+// Converts audio to studio-quality 16,000 Hz 16-bit linear PCM with continuous phase interpolation
 
 class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -9,6 +9,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.buffer = new Int16Array(this.chunkSize);
     this.bufferIndex = 0;
     this.isMuted = false;
+    this.phase = 0.0;
 
     this.port.onmessage = (event) => {
       if (event.data && typeof event.data.mute !== 'undefined') {
@@ -27,67 +28,61 @@ class PCMProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    const channelData = input[0]; // mono channel
+    const channelData = input[0]; // mono Float32 [-1.0, 1.0]
     const inputSampleRate = sampleRate; // global in AudioWorklet
 
-    // Calculate volume / RMS for local energy detection
+    // Calculate RMS energy
     let sum = 0;
     for (let i = 0; i < channelData.length; i++) {
       sum += channelData[i] * channelData[i];
     }
     const rms = Math.sqrt(sum / channelData.length);
 
-    // Resample to 16kHz
-    const resampled = this.downsample(channelData, inputSampleRate, this.targetSampleRate);
+    // Fast path: if audioContext is already 16kHz, direct conversion with 0 resampling
+    if (inputSampleRate === this.targetSampleRate) {
+      for (let i = 0; i < channelData.length; i++) {
+        let s = Math.max(-1, Math.min(1, channelData[i]));
+        const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        this.buffer[this.bufferIndex++] = sample16;
 
-    // Convert Float32 [-1.0, 1.0] to Int16 and batch into 100ms chunks
-    for (let i = 0; i < resampled.length; i++) {
-      let s = Math.max(-1, Math.min(1, resampled[i]));
-      const sample16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        if (this.bufferIndex >= this.chunkSize) {
+          const pcmCopy = new Int16Array(this.buffer);
+          this.port.postMessage({
+            pcm: pcmCopy.buffer,
+            rms: rms,
+          }, [pcmCopy.buffer]);
+          this.bufferIndex = 0;
+        }
+      }
+      return true;
+    }
+
+    // Continuous linear interpolation resampler with persistent phase across quanta
+    const ratio = inputSampleRate / this.targetSampleRate;
+    while (this.phase < channelData.length) {
+      const i0 = Math.floor(this.phase);
+      const i1 = Math.min(channelData.length - 1, i0 + 1);
+      const frac = this.phase - i0;
+      const s = channelData[i0] + frac * (channelData[i1] - channelData[i0]);
+
+      const clamped = Math.max(-1, Math.min(1, s));
+      const sample16 = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
       this.buffer[this.bufferIndex++] = sample16;
 
       if (this.bufferIndex >= this.chunkSize) {
-        // Send full 100ms chunk (3200 bytes) and current RMS energy
         const pcmCopy = new Int16Array(this.buffer);
         this.port.postMessage({
           pcm: pcmCopy.buffer,
-          rms: rms
+          rms: rms,
         }, [pcmCopy.buffer]);
         this.bufferIndex = 0;
       }
+
+      this.phase += ratio;
     }
+    this.phase -= channelData.length;
 
     return true;
-  }
-
-  downsample(buffer, fromRate, toRate) {
-    if (fromRate === toRate) {
-      return buffer;
-    }
-    if (fromRate < toRate) {
-      return buffer;
-    }
-
-    const sampleRateRatio = fromRate / toRate;
-    const newLength = Math.round(buffer.length / sampleRateRatio);
-    const result = new Float32Array(newLength);
-
-    let offsetResult = 0;
-    let offsetBuffer = 0;
-
-    while (offsetResult < result.length) {
-      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
-      let accum = 0;
-      let count = 0;
-      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-        accum += buffer[i];
-        count++;
-      }
-      result[offsetResult] = count > 0 ? accum / count : 0;
-      offsetResult++;
-      offsetBuffer = nextOffsetBuffer;
-    }
-    return result;
   }
 }
 
