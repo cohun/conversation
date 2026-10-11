@@ -54,7 +54,7 @@ type SavedConversation struct {
 	LastResumedAt  *string `json:"last_resumed_at"`
 }
 
-func InitDB(dbPath string) (*DB, error) {
+func initDBSingle(dbPath string) (*DB, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create db directory %s: %w", dir, err)
@@ -75,9 +75,8 @@ func InitDB(dbPath string) (*DB, error) {
 			strings.Contains(errStr, "corrupt") ||
 			strings.Contains(errStr, "not a database") ||
 			strings.Contains(errStr, "disk i/o error") {
-			log.Printf("[DB] ⚠️ Corrupted SQLite database detected (%v). Auto-recovering clean database at %s...", err, dbPath)
-			backupPath := fmt.Sprintf("%s.corrupt.%d", dbPath, time.Now().Unix())
-			_ = os.Rename(dbPath, backupPath)
+			log.Printf("[DB] ⚠️ Corrupted SQLite database detected (%v). Deleting corrupted files at %s...", err, dbPath)
+			_ = os.Remove(dbPath)
 			_ = os.Remove(dbPath + "-wal")
 			_ = os.Remove(dbPath + "-shm")
 			_ = os.Remove(dbPath + "-journal")
@@ -85,14 +84,14 @@ func InitDB(dbPath string) (*DB, error) {
 			// Re-open clean database
 			conn, err = sql.Open("sqlite", dsn)
 			if err != nil {
-				return nil, fmt.Errorf("failed to recreate sqlite database after corruption: %w", err)
+				return nil, fmt.Errorf("failed to reopen sqlite database after corruption: %w", err)
 			}
 			database.conn = conn
 			if err := database.migrate(); err != nil {
 				conn.Close()
 				return nil, fmt.Errorf("failed to migrate fresh database: %w", err)
 			}
-			log.Printf("[DB] ✅ Successfully recovered fresh SQLite database.")
+			log.Printf("[DB] ✅ Successfully recovered fresh SQLite database at %s.", dbPath)
 		} else {
 			return nil, fmt.Errorf("failed to migrate database: %w", err)
 		}
@@ -104,6 +103,31 @@ func InitDB(dbPath string) (*DB, error) {
 	}
 
 	return database, nil
+}
+
+func InitDB(dbPath string) (*DB, error) {
+	database, err := initDBSingle(dbPath)
+	if err == nil {
+		return database, nil
+	}
+
+	log.Printf("[DB] ⚠️ Failed to initialize database at %s: %v. Falling back to /tmp/app.db...", dbPath, err)
+	tmpPath := "/tmp/app.db"
+	if dbPath != tmpPath {
+		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath + "-wal")
+		_ = os.Remove(tmpPath + "-shm")
+		_ = os.Remove(tmpPath + "-journal")
+
+		tmpDB, tmpErr := initDBSingle(tmpPath)
+		if tmpErr == nil {
+			log.Printf("[DB] ✅ Successfully initialized resilient fallback database at %s", tmpPath)
+			return tmpDB, nil
+		}
+		log.Printf("[DB] ⚠️ Fallback to %s also failed: %v", tmpPath, tmpErr)
+	}
+
+	return nil, err
 }
 
 func (d *DB) Close() error {

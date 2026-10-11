@@ -33,7 +33,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --max-instances 1 \
   --memory 512Mi \
   --cpu 1 \
-  --set-env-vars GEMINI_API_KEY="${GEMINI_API_KEY}",GEMINI_LIVE_MODEL="auto",DB_PATH="/data/app.db",ADMIN_EMAILS="attila.private@gmail.com,attila.hitb@gmail.com",SESSION_SECRET="antigravity-english-teacher-session-secret-attila-2026",APP_URL="https://english-teacher-app-916343130758.europe-west1.run.app"
+  --set-env-vars GEMINI_API_KEY="${GEMINI_API_KEY}",GEMINI_LIVE_MODEL="auto",DB_PATH="/tmp/app.db",ADMIN_EMAILS="attila.private@gmail.com,attila.hitb@gmail.com",SESSION_SECRET="antigravity-english-teacher-session-secret-attila-2026",APP_URL="https://english-teacher-app-916343130758.europe-west1.run.app"
 
 echo "=========================================================="
 echo " Deployment Complete! Service URL:"
