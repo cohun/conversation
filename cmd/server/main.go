@@ -510,14 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.6-mobile-feedback-isolation"
+	const AppVersion = "2.4.7-cegagy-loudspeaker-teardown"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
-			"audio_output":     "Adaptive Routing (Mobile Loudspeaker 3.6x / Desktop Clean 1.15x)",
-			"isolation":        "Hardware Half-Duplex Acoustic Feedback Isolation",
+			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker 4.2x + Compressor / Desktop Clean 1.15x)",
+			"isolation":        "CegAgy Hardware Teardown (track.stop() for pure media speakerphone)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})

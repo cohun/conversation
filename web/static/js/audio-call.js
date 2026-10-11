@@ -22,8 +22,11 @@ class AudioCallManager {
     this.compressor = null;
     this.isSpeakerphone = true; // Default to loudspeaker on mobile devices
     this.micStream = null;
+    this.micSourceNode = null;
     this.workletNode = null;
     this.scriptProcessorNode = null;
+    this.silentGainNode = null;
+    this.workletModuleLoaded = false;
     this.isMuted = false;
     this.state = 'connecting'; // connecting | listening | speaking | thinking | ended
 
@@ -58,16 +61,6 @@ class AudioCallManager {
       (navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1);
   }
 
-  setMicrophoneHardwareEnabled(enabled) {
-    if (this.micStream) {
-      this.micStream.getAudioTracks().forEach((track) => {
-        if (track.enabled !== enabled) {
-          track.enabled = enabled;
-        }
-      });
-    }
-  }
-
   applyAudioSessionMode() {
     if (!this.isMobileDevice()) return;
     if ('audioSession' in navigator) {
@@ -75,43 +68,102 @@ class AudioCallManager {
         if (this.state === 'listening' || !this.isSpeakerphone) {
           navigator.audioSession.type = 'play-and-record';
         } else {
-          // 'speaking' or 'thinking' with speakerphone enabled -> playback routes to loudspeaker!
+          // In 'speaking' / 'thinking' with speakerphone: pure media playback routes to loudspeaker!
           navigator.audioSession.type = 'playback';
         }
       } catch (e) {
-        console.warn('[AudioCall] navigator.audioSession error:', e);
+        console.warn('[AudioCall] navigator.audioSession notice:', e);
       }
     }
   }
 
   applyAudioRouting() {
-    if (!this.compressor || !this.audioCtx) return;
-
-    try {
-      this.compressor.disconnect();
-    } catch (e) {}
+    if (!this.outputGain || !this.audioCtx) return;
 
     const isMobile = this.isMobileDevice();
-    const targetGain = (isMobile && this.isSpeakerphone) ? 3.6 : (isMobile ? 1.2 : 1.15);
-    if (this.outputGain) {
-      this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
-    }
+    const targetGain = (isMobile && this.isSpeakerphone) ? 4.2 : (isMobile ? 1.2 : 1.15);
+    this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
-    this.compressor.connect(this.audioCtx.destination);
-    this.applyAudioSessionMode();
-    console.log(`[AudioCall] 🔊 Audio route: Direct AudioContext Destination (${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker' : 'Mobile Earpiece') : 'Desktop 1.15x'})`);
+    console.log(`[AudioCall] 🔊 Audio route: CegAgy Chain (Compressor -> Gain ${targetGain}x -> Destination) [${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker' : 'Mobile Earpiece') : 'Desktop 1.15x'}]`);
   }
 
   toggleSpeakerphone() {
     this.isSpeakerphone = !this.isSpeakerphone;
     this.applyAudioRouting();
+    if (this.isMobileDevice()) {
+      if (this.isSpeakerphone && this.state !== 'listening') {
+        this.stopMicrophoneCapture();
+      } else if (!this.isSpeakerphone && !this.micStream) {
+        this.startMicrophoneCapture();
+      }
+      this.applyAudioSessionMode();
+    }
     return this.isSpeakerphone;
   }
 
   setSpeakerphone(enabled) {
     this.isSpeakerphone = !!enabled;
     this.applyAudioRouting();
+    if (this.isMobileDevice()) {
+      this.applyAudioSessionMode();
+    }
     return this.isSpeakerphone;
+  }
+
+  async startMicrophoneCapture() {
+    if (this.micStream) return;
+    try {
+      this.applyAudioSessionMode();
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true,
+        },
+      });
+      await this.initMicrophoneCapture();
+      console.log('[AudioCall] 🎙️ Microphone capture active');
+    } catch (err) {
+      console.error('[AudioCall] startMicrophoneCapture error:', err);
+    }
+  }
+
+  stopMicrophoneCapture() {
+    if (this.workletNode) {
+      try {
+        this.workletNode.port.onmessage = null;
+        this.workletNode.disconnect();
+      } catch (e) {}
+      this.workletNode = null;
+    }
+    if (this.scriptProcessorNode) {
+      try {
+        this.scriptProcessorNode.onaudioprocess = null;
+        this.scriptProcessorNode.disconnect();
+      } catch (e) {}
+      this.scriptProcessorNode = null;
+    }
+    if (this.silentGainNode) {
+      try {
+        this.silentGainNode.disconnect();
+      } catch (e) {}
+      this.silentGainNode = null;
+    }
+    if (this.micSourceNode) {
+      try {
+        this.micSourceNode.disconnect();
+      } catch (e) {}
+      this.micSourceNode = null;
+    }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((track) => track.stop());
+      } catch (e) {}
+      this.micStream = null;
+      console.log('[AudioCall] 🛑 Mobile Hardware Teardown: mic stopped, phone released to media loudspeaker mode!');
+    }
+    this.applyAudioSessionMode();
   }
 
   async start() {
@@ -119,35 +171,36 @@ class AudioCallManager {
       this.setState('connecting');
       const isMobile = this.isMobileDevice();
 
-      // 1. AudioSession initial kick for iOS Safari 16.4+
-      if (isMobile && 'audioSession' in navigator) {
-        try {
-          navigator.audioSession.type = 'auto';
-        } catch (asErr) {
-          console.warn('[AudioCall] navigator.audioSession notice:', asErr);
-        }
-      }
-
-      // 2. Initialize Web Audio Context (request interactive latency)
+      // 1. Initialize Web Audio Context (request interactive latency)
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
 
-      // 3. Master output amplifier & dynamics compressor
-      // Desktop: 1.15x gain (comfortable, clean listening volume for headphones/speakers)
-      // Mobile: 3.6x gain (loud speakerphone for phone loudspeaker)
-      const targetGain = (isMobile && this.isSpeakerphone) ? 3.6 : (isMobile ? 1.2 : 1.15);
+      // 2. Pre-load AudioWorklet module
+      if (this.audioCtx.audioWorklet) {
+        try {
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.7');
+          this.workletModuleLoaded = true;
+        } catch (e) {
+          this.workletModuleLoaded = false;
+        }
+      }
+
+      // 3. Audio Graph Setup: Source -> Compressor -> Gain -> Destination (CegAgy Architecture)
+      // Desktop: 1.15x gain (clean, comfortable listening volume for headphones/speakers)
+      // Mobile: 4.2x gain + Dynamics Compressor (CegAgy hardware tuned for phone loudspeakers)
+      const targetGain = (isMobile && this.isSpeakerphone) ? 4.2 : (isMobile ? 1.2 : 1.15);
       this.outputGain = this.audioCtx.createGain();
       this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
       if (isMobile) {
-        this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
-        this.compressor.knee.setValueAtTime(24, this.audioCtx.currentTime);
-        this.compressor.ratio.setValueAtTime(12, this.audioCtx.currentTime);
-        this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+        this.compressor.threshold.setValueAtTime(-28, this.audioCtx.currentTime);
+        this.compressor.knee.setValueAtTime(35, this.audioCtx.currentTime);
+        this.compressor.ratio.setValueAtTime(16, this.audioCtx.currentTime);
+        this.compressor.attack.setValueAtTime(0.002, this.audioCtx.currentTime);
         this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
       } else {
         this.compressor.threshold.setValueAtTime(-10, this.audioCtx.currentTime);
@@ -157,29 +210,34 @@ class AudioCallManager {
         this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
       }
 
-      this.outputGain.connect(this.compressor);
-      this.compressor.connect(this.audioCtx.destination);
+      // Compressor connects to OutputGain, OutputGain connects to Destination!
+      this.compressor.connect(this.outputGain);
+      this.outputGain.connect(this.audioCtx.destination);
 
-      // 4. Request microphone access without aggressive noise gating
-      this.micStream = await navigator.mediaDevices.getUserMedia({
+      // 4. Request initial microphone permission within the user gesture
+      const permStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,
-          noiseSuppression: false, // Don't mute or gate speech formants
+          noiseSuppression: false,
           autoGainControl: true,
         },
       });
 
-      // 5. On mobile, mute mic hardware during greeting & set audioSession to playback for loudspeaker!
       if (isMobile) {
-        this.setMicrophoneHardwareEnabled(false);
+        // Mobile: Immediate Hardware Teardown! Sarah speaks first!
+        // Releasing microphone tracks immediately returns phone to pure media stereo loudspeaker mode!
+        permStream.getTracks().forEach((track) => track.stop());
+        this.micStream = null;
+        this.applyAudioSessionMode();
+        console.log('[AudioCall] 🔊 Mobile initial Hardware Teardown: mic released for Sarah greeting');
+      } else {
+        // Desktop: Maintain persistent mic stream as verified and working
+        this.micStream = permStream;
+        await this.initMicrophoneCapture();
       }
-      this.applyAudioRouting();
 
-      // 6. Initialize Microphone Capture (AudioWorklet with ScriptProcessor fallback)
-      await this.initMicrophoneCapture();
-
-      // 7. Connect WebSocket to server proxy
+      // 5. Connect WebSocket to server proxy
       this.connectWebSocket();
 
     } catch (err) {
@@ -190,13 +248,17 @@ class AudioCallManager {
   }
 
   async initMicrophoneCapture() {
+    if (!this.micStream) return;
     let workletInitialized = false;
 
     // Attempt 1: Modern AudioWorklet
     if (this.audioCtx.audioWorklet) {
       try {
-        await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.4');
-        const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+        if (!this.workletModuleLoaded) {
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.7');
+          this.workletModuleLoaded = true;
+        }
+        this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
         this.workletNode.port.onmessage = (event) => {
@@ -204,11 +266,11 @@ class AudioCallManager {
           this.handleMicPcmChunk(pcm, rms);
         };
 
-        sourceNode.connect(this.workletNode);
-        const silentGain = this.audioCtx.createGain();
-        silentGain.gain.value = 0;
-        this.workletNode.connect(silentGain);
-        silentGain.connect(this.audioCtx.destination);
+        this.micSourceNode.connect(this.workletNode);
+        this.silentGainNode = this.audioCtx.createGain();
+        this.silentGainNode.gain.value = 0;
+        this.workletNode.connect(this.silentGainNode);
+        this.silentGainNode.connect(this.audioCtx.destination);
         workletInitialized = true;
         console.log('[AudioCall] 🎙️ AudioWorklet microphone capture initialized');
       } catch (workletErr) {
@@ -223,9 +285,10 @@ class AudioCallManager {
   }
 
   initScriptProcessorFallback() {
+    if (!this.micStream) return;
     try {
       const bufferSize = 2048;
-      const sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+      this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
       const scriptNode = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
       const targetSampleRate = 16000;
@@ -285,11 +348,11 @@ class AudioCallManager {
         spPhase -= inputData.length;
       };
 
-      sourceNode.connect(scriptNode);
-      const silentGain = this.audioCtx.createGain();
-      silentGain.gain.value = 0;
-      scriptNode.connect(silentGain);
-      silentGain.connect(this.audioCtx.destination);
+      this.micSourceNode.connect(scriptNode);
+      this.silentGainNode = this.audioCtx.createGain();
+      this.silentGainNode.gain.value = 0;
+      scriptNode.connect(this.silentGainNode);
+      this.silentGainNode.connect(this.audioCtx.destination);
       this.scriptProcessorNode = scriptNode;
       console.log('[AudioCall] 🎙️ ScriptProcessor fallback microphone capture active');
     } catch (spErr) {
@@ -510,6 +573,13 @@ class AudioCallManager {
   }
 
   scheduleAudioPlayback(buffer) {
+    if (!this.audioCtx || this.audioCtx.state === 'closed') return;
+    if (this.audioCtx.state === 'suspended') {
+      try {
+        this.audioCtx.resume();
+      } catch (e) {}
+    }
+
     const now = this.audioCtx.currentTime;
     if (this.nextPlayTime < now) {
       this.nextPlayTime = now + 0.03;
@@ -518,8 +588,10 @@ class AudioCallManager {
     const source = this.audioCtx.createBufferSource();
     source.buffer = buffer;
 
-    // Connect to master output amplifier (gain + dynamics compressor -> destination)
-    if (this.outputGain) {
+    // CegAgy Audio Chain: Source -> Compressor -> OutputGain -> Destination
+    if (this.compressor) {
+      source.connect(this.compressor);
+    } else if (this.outputGain) {
       source.connect(this.outputGain);
     } else {
       source.connect(this.audioCtx.destination);
@@ -562,15 +634,15 @@ class AudioCallManager {
     if (remainingSec <= 0.05 && this.activeSourceNodes.length === 0) {
       this.finishAiTurn();
     } else {
-      // Schedule check when all queued audio has finished playing + 300ms safety cushion
-      const delayMs = Math.max(80, Math.ceil((remainingSec + 0.3) * 1000));
+      // Schedule check when all queued audio has finished playing + 400ms safety cushion (CegAgy standard)
+      const delayMs = Math.max(80, Math.ceil((remainingSec + 0.4) * 1000));
       this.turnCompletionTimer = setTimeout(() => {
         this.checkIfAiSpeechFinished();
       }, delayMs);
     }
   }
 
-  finishAiTurn() {
+  async finishAiTurn() {
     if (this.turnCompletionTimer) {
       clearTimeout(this.turnCompletionTimer);
       this.turnCompletionTimer = null;
@@ -578,7 +650,7 @@ class AudioCallManager {
     this.turnCompleteReceived = false;
     this.activeSourceNodes = [];
     this.setAiSpeaking(false);
-    this.setState('listening');
+    await this.setState('listening');
     console.log('[AudioCall] 👂 AI speech finished playing completely. Listening to student!');
   }
 
@@ -620,18 +692,18 @@ class AudioCallManager {
     }
   }
 
-  setState(newState) {
+  async setState(newState) {
     this.state = newState;
     const isMobile = this.isMobileDevice();
 
-    if (isMobile) {
+    if (isMobile && this.isSpeakerphone) {
       if (newState === 'listening') {
-        this.setMicrophoneHardwareEnabled(true);
-      } else {
-        // In 'thinking', 'speaking', 'connecting' -> mute mic hardware on mobile to kill acoustic feedback!
-        this.setMicrophoneHardwareEnabled(false);
+        // Diák köre: mikrofon indítása
+        await this.startMicrophoneCapture();
+      } else if (newState === 'thinking' || newState === 'speaking' || newState === 'connecting') {
+        // Sarah köre: Hardware Teardown (t.stop()) -> telefon azonnal visszatér tiszta sztereó média-hangszóró módba!
+        this.stopMicrophoneCapture();
       }
-      this.applyAudioSessionMode();
     }
 
     this.onStateChange(newState);
@@ -647,6 +719,11 @@ class AudioCallManager {
 
     this.turnCompleteReceived = false;
     this.setAiSpeaking(false);
+
+    // Mobilon: Hardware Teardown azonnal a gomb megnyomásakor
+    if (this.isMobileDevice() && this.isSpeakerphone) {
+      this.stopMicrophoneCapture();
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       console.log(`[AudioCall] 🎯 passTurn: passing turn to partner (chunks streamed in turn: ${this.sentAudioChunkCount})`);
@@ -665,6 +742,16 @@ class AudioCallManager {
         type: 'pass_turn',
         text: '',
       }));
+    }
+  }
+
+  async manualInterrupt() {
+    console.log('[AudioCall] Manual interrupt requested by user button');
+    this.flushAudioQueue();
+    await this.setState('listening');
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'client_interrupt' }));
     }
   }
 
@@ -699,7 +786,7 @@ class AudioCallManager {
 
   endCall() {
     if (this.state === 'ended') return;
-    this.setState('ended');
+    this.state = 'ended';
 
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
@@ -715,33 +802,7 @@ class AudioCallManager {
       this.ws = null;
     }
 
-    if (this.micStream) {
-      this.micStream.getTracks().forEach((track) => {
-        track.enabled = true;
-        track.stop();
-      });
-      this.micStream = null;
-    }
-
-    if (this.scriptProcessorNode) {
-      try {
-        this.scriptProcessorNode.disconnect();
-      } catch (e) {}
-      this.scriptProcessorNode = null;
-    }
-
-    if (this.workletNode) {
-      try {
-        this.workletNode.disconnect();
-      } catch (e) {}
-      this.workletNode = null;
-    }
-
-    if (this.isMobileDevice() && 'audioSession' in navigator) {
-      try {
-        navigator.audioSession.type = 'auto';
-      } catch (e) {}
-    }
+    this.stopMicrophoneCapture();
 
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
       try {
