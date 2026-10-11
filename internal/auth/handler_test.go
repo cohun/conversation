@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"english-teacher-app/internal/config"
 	"english-teacher-app/internal/db"
@@ -246,3 +247,89 @@ func TestSessionCookieSecureOnHTTPS(t *testing.T) {
 		t.Errorf("Expected MaxAge < 0 for clearing cookie, got %d", clearCookie.MaxAge)
 	}
 }
+
+func TestStatelessSignedSessionTokens(t *testing.T) {
+	// Instance 1: Creates the session token
+	tempDir1 := t.TempDir()
+	dbPath1 := filepath.Join(tempDir1, "instance1.db")
+	db1, err := db.InitDB(dbPath1)
+	if err != nil {
+		t.Fatalf("InitDB 1 failed: %v", err)
+	}
+	defer db1.Close()
+
+	cfg1 := &config.Config{
+		Port:          "8080",
+		DBPath:        dbPath1,
+		AdminEmails:   []string{"attila.hitb@gmail.com"},
+		SessionSecret: "shared-test-secret-123",
+	}
+	resolver1 := gemini.NewModelResolver(db1, "auto")
+	handler1 := NewHandler(cfg1, db1, resolver1)
+
+	// User logs in on Instance 1
+	claims := SessionClaims{
+		UserID:    "user-uuid-123",
+		Email:     "attila.hitb@gmail.com",
+		Role:      "admin",
+		Status:    "active",
+		ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+	}
+	signedToken := handler1.signSessionToken(claims)
+	if signedToken == "" {
+		t.Fatalf("Expected non-empty signedToken")
+	}
+
+	// Instance 2: Separate DB, represents a different Cloud Run instance or a container restart
+	tempDir2 := t.TempDir()
+	dbPath2 := filepath.Join(tempDir2, "instance2.db")
+	db2, err := db.InitDB(dbPath2)
+	if err != nil {
+		t.Fatalf("InitDB 2 failed: %v", err)
+	}
+	defer db2.Close()
+
+	cfg2 := &config.Config{
+		Port:          "8080",
+		DBPath:        dbPath2,
+		AdminEmails:   []string{"attila.hitb@gmail.com"},
+		SessionSecret: "shared-test-secret-123", // Same secret shared via environment
+	}
+	resolver2 := gemini.NewModelResolver(db2, "auto")
+	handler2 := NewHandler(cfg2, db2, resolver2)
+
+	// Instance 2 receives the request with signedToken from Instance 1
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: signedToken})
+
+	user2 := handler2.GetUserFromRequest(req)
+	if user2 == nil {
+		t.Fatalf("Expected Instance 2 to validate token and return user")
+	}
+	if user2.Email != "attila.hitb@gmail.com" {
+		t.Errorf("Expected email attila.hitb@gmail.com, got %s", user2.Email)
+	}
+	if user2.Role != "admin" {
+		t.Errorf("Expected role admin, got %s", user2.Role)
+	}
+	if user2.Status != "active" {
+		t.Errorf("Expected status active, got %s", user2.Status)
+	}
+
+	// Verify RequireAdmin on Instance 2 succeeds
+	adminHandlerCalled := false
+	dummyAdminHandler := handler2.RequireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		adminHandlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	dummyAdminHandler(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK on Instance 2 RequireAdmin, got %d: %s", w.Code, w.Body.String())
+	}
+	if !adminHandlerCalled {
+		t.Errorf("Expected adminHandler to be called")
+	}
+}
+

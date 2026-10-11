@@ -293,6 +293,26 @@ func (d *DB) CreateSession(userID string, duration time.Duration) (*Session, err
 	}, nil
 }
 
+func (d *DB) CreateSessionWithToken(token, userID string, duration time.Duration) (*Session, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	expiresAt := time.Now().Add(duration)
+	_, err := d.conn.Exec(`
+		INSERT OR REPLACE INTO sessions (token, user_id, expires_at)
+		VALUES (?, ?, ?)
+	`, token, userID, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Session{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
 func (d *DB) GetSession(token string) (*Session, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

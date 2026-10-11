@@ -2,11 +2,17 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -70,8 +76,75 @@ func NewHandler(cfg *config.Config, database *db.DB, resolver *gemini.ModelResol
 	}
 }
 
+func (h *Handler) isSecureCookie() bool {
+	if os.Getenv("K_SERVICE") != "" {
+		return true // Always HTTPS on Google Cloud Run
+	}
+	if strings.HasPrefix(h.cfg.AppURL, "https://") {
+		return true
+	}
+	return false
+}
+
+type SessionClaims struct {
+	UserID    string `json:"uid"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	ExpiresAt int64  `json:"exp"`
+}
+
+func (h *Handler) signSessionToken(claims SessionClaims) string {
+	payloadBytes, _ := json.Marshal(claims)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadBytes)
+
+	mac := hmac.New(sha256.New, []byte(h.cfg.SessionSecret))
+	mac.Write([]byte(payloadB64))
+	sigHex := hex.EncodeToString(mac.Sum(nil))
+
+	return payloadB64 + "." + sigHex
+}
+
+func (h *Handler) verifySessionToken(token string) (*SessionClaims, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return nil, errors.New("invalid token format")
+	}
+
+	payloadB64 := parts[0]
+	sigHex := parts[1]
+
+	expectedSig := hmac.New(sha256.New, []byte(h.cfg.SessionSecret))
+	expectedSig.Write([]byte(payloadB64))
+	expectedBytes := expectedSig.Sum(nil)
+
+	actualBytes, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return nil, errors.New("invalid signature encoding")
+	}
+
+	if !hmac.Equal(expectedBytes, actualBytes) {
+		return nil, errors.New("invalid signature")
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
+	if err != nil {
+		return nil, errors.New("invalid payload base64")
+	}
+
+	var claims SessionClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, errors.New("invalid payload json")
+	}
+
+	if time.Now().Unix() > claims.ExpiresAt {
+		return nil, errors.New("token expired")
+	}
+
+	return &claims, nil
+}
+
 func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
-	secure := strings.HasPrefix(h.cfg.AppURL, "https://")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    token,
@@ -79,13 +152,12 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
 		Expires:  time.Now().Add(30 * 24 * time.Hour),
 		MaxAge:   30 * 24 * 3600,
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   h.isSecureCookie(),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
 func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
-	secure := strings.HasPrefix(h.cfg.AppURL, "https://")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
@@ -93,7 +165,7 @@ func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   h.isSecureCookie(),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -127,17 +199,63 @@ func (h *Handler) GetUserFromRequest(r *http.Request) *db.User {
 		return nil
 	}
 
-	session, err := h.database.GetSession(token)
-	if err != nil || session == nil {
+	var userID string
+	var email string
+	var role string
+	var status string
+
+	// 1. Verify stateless signed HMAC token first (resilient across all Cloud Run instances and restarts)
+	if claims, err := h.verifySessionToken(token); err == nil && claims != nil {
+		userID = claims.UserID
+		email = strings.ToLower(strings.TrimSpace(claims.Email))
+		role = claims.Role
+		status = claims.Status
+	} else {
+		// 2. Fallback to DB session lookup (for backward compatibility with legacy tokens)
+		session, err := h.database.GetSession(token)
+		if err != nil || session == nil {
+			return nil
+		}
+		userID = session.UserID
+	}
+
+	// 3. Look up user in local SQLite by ID or Email
+	var user *db.User
+	if userID != "" {
+		user, _ = h.database.GetUserByID(userID)
+	}
+	if user == nil && email != "" {
+		user, _ = h.database.GetUserByEmail(email)
+	}
+
+	// 4. Reconstitute user in local SQLite if this instance doesn't have it yet (fresh/alternate Cloud Run container)
+	if user == nil && email != "" {
+		if h.cfg.IsAdminEmail(email) {
+			role = "admin"
+			status = "active"
+		}
+		if role == "" {
+			role = "student"
+		}
+		if status == "" {
+			status = "pending"
+		}
+		namePart := strings.Split(email, "@")[0]
+		namePart = strings.ReplaceAll(namePart, ".", " ")
+		namePart = strings.ReplaceAll(namePart, "_", " ")
+		namePart = strings.Title(strings.TrimSpace(namePart))
+		var cErr error
+		user, cErr = h.database.CreateUser(email, "", "google", "", role, status, namePart)
+		if cErr != nil {
+			user, _ = h.database.GetUserByEmail(email)
+		}
+	}
+
+	if user == nil {
 		return nil
 	}
 
-	user, err := h.database.GetUserByID(session.UserID)
-	if err != nil || user == nil {
-		return nil
-	}
-
-	// Always ensure configured admin emails retain active admin role
+	// 5. Always ensure configured admin emails retain active admin role
 	if h.cfg.IsAdminEmail(user.Email) && (user.Role != "admin" || user.Status != "active") {
 		_ = h.database.UpdateUserRole(user.ID, "admin")
 		_ = h.database.UpdateUserStatus(user.ID, "active")
@@ -170,8 +288,12 @@ func (h *Handler) Authenticate(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := h.GetUserFromRequest(r)
-		if user == nil || user.Role != "admin" {
-			jsonErr(w, http.StatusForbidden, "Administrator privileges required.")
+		if user == nil {
+			jsonErr(w, http.StatusUnauthorized, "Bejelentkezés szükséges (a munkamenet nem található). Kérlek jelentkezz be újra.")
+			return
+		}
+		if user.Role != "admin" {
+			jsonErr(w, http.StatusForbidden, fmt.Sprintf("Adminisztrátori jogosultság szükséges. (Bejelentkezve: %s, szerepkör: %s)", user.Email, user.Role))
 			return
 		}
 		ctx := context.WithValue(r.Context(), UserContextKey, user)
@@ -250,13 +372,16 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create session
-	session, err := h.database.CreateSession(user.ID, 30*24*time.Hour)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "Failed to create session")
-		return
-	}
-	h.setSessionCookie(w, session.Token)
+	// Create session with signed HMAC token
+	token := h.signSessionToken(SessionClaims{
+		UserID:    user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		Status:    user.Status,
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
+	})
+	_, _ = h.database.CreateSessionWithToken(token, user.ID, 30*24*time.Hour)
+	h.setSessionCookie(w, token)
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"user":    user,
@@ -318,12 +443,15 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		user.Status = "active"
 	}
 
-	session, err := h.database.CreateSession(user.ID, 30*24*time.Hour)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "Failed to create session")
-		return
-	}
-	h.setSessionCookie(w, session.Token)
+	token := h.signSessionToken(SessionClaims{
+		UserID:    user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		Status:    user.Status,
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
+	})
+	_, _ = h.database.CreateSessionWithToken(token, user.ID, 30*24*time.Hour)
+	h.setSessionCookie(w, token)
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"user":    user,
@@ -383,14 +511,13 @@ func (h *Handler) HandleGoogleLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = rand.Read(stateBytes)
 	state := hex.EncodeToString(stateBytes)
 
-	secure := strings.HasPrefix(h.cfg.AppURL, "https://")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    state,
 		Path:     "/",
 		Expires:  time.Now().Add(10 * time.Minute),
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   h.isSecureCookie(),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -491,13 +618,16 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create session
-	session, err := h.database.CreateSession(user.ID, 30*24*time.Hour)
-	if err != nil {
-		http.Redirect(w, r, "/?auth_error=session_failed", http.StatusTemporaryRedirect)
-		return
-	}
-	h.setSessionCookie(w, session.Token)
+	// Create session with signed HMAC token
+	sessionToken := h.signSessionToken(SessionClaims{
+		UserID:    user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		Status:    user.Status,
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
+	})
+	_, _ = h.database.CreateSessionWithToken(sessionToken, user.ID, 30*24*time.Hour)
+	h.setSessionCookie(w, sessionToken)
 
 	// Clean up state cookie
 	http.SetCookie(w, &http.Cookie{
@@ -507,7 +637,7 @@ func (h *Handler) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   strings.HasPrefix(h.cfg.AppURL, "https://"),
+		Secure:   h.isSecureCookie(),
 		SameSite: http.SameSiteLaxMode,
 	})
 
