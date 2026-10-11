@@ -165,7 +165,7 @@ class AudioCallManager {
     switch (msg.type) {
       case 'connected':
         console.log(`[AudioCall] Session active with model: ${msg.model} (${msg.persona})`);
-        this.setState('listening');
+        this.setState('thinking');
         this.startCallTimer();
         break;
 
@@ -188,6 +188,10 @@ class AudioCallManager {
         break;
 
       case 'turn_complete':
+        if (this.activeSourceNodes.length === 0) {
+          this.setAiSpeaking(false);
+          this.setState('listening');
+        }
         break;
 
       case 'topic_saved':

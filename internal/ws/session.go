@@ -44,6 +44,7 @@ type RollingLiveSession struct {
 	isProcessingTurn  bool
 	droppingAudio     bool
 	lastTurnTime      time.Time
+	userAudioBuffer   []gemini.LiveBlob
 }
 
 func newRollingLiveSession(
@@ -223,6 +224,7 @@ func (s *RollingLiveSession) handleClientInterrupt() {
 	s.isStudentSpeaking = false
 	s.isProcessingTurn = false
 	s.droppingAudio = true
+	s.userAudioBuffer = nil
 	s.activityMu.Unlock()
 
 	// 1. Tell browser audio has stopped immediately
@@ -332,6 +334,7 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 				s.isAiSpeaking = false
 				s.isProcessingTurn = false
 				s.droppingAudio = false
+				s.userAudioBuffer = nil
 				s.lastTurnTime = time.Now()
 				s.activityMu.Unlock()
 
@@ -411,11 +414,11 @@ func (s *RollingLiveSession) Run() {
 		Persona: s.targetPersona.Name,
 	})
 
-	// 2. Send initial greeting prompt so Sarah speaks first
-	s.sendInitialGreeting()
-
-	// 3. Start Gemini reader for initial connection
+	// 2. Start Gemini reader for initial connection
 	go s.readFromGeminiLoop(ctx, s.activeGemini)
+
+	// 3. Send initial greeting prompt so Sarah speaks first
+	s.sendInitialGreeting()
 
 	// 4. Start Proactive Rollover Loop (every 5.5 minutes) to stay completely clear of timeouts & token exhaustion
 	go s.rolloverTickerLoop(ctx, 330*time.Second)
@@ -466,76 +469,83 @@ func (s *RollingLiveSession) Run() {
 		case "audio":
 			if clientMsg.Data != "" {
 				s.activityMu.Lock()
-				shouldSendStart := !s.isStudentSpeaking && !s.isAiSpeaking
-				if shouldSendStart {
-					s.isStudentSpeaking = true
+				// Only buffer student speech when AI is not speaking and no turn is actively processing
+				if !s.isAiSpeaking && !s.isProcessingTurn {
+					s.userAudioBuffer = append(s.userAudioBuffer, gemini.LiveBlob{
+						MimeType: "audio/pcm;rate=16000",
+						Data:     clientMsg.Data,
+					})
+					// Cap buffer at 45 seconds of speech (450 * 100ms)
+					if len(s.userAudioBuffer) > 450 {
+						s.userAudioBuffer = s.userAudioBuffer[len(s.userAudioBuffer)-450:]
+					}
 				}
 				s.activityMu.Unlock()
-
-				if shouldSendStart {
-					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-						RealtimeInput: &gemini.LiveRealtimeInput{
-							ActivityStart: &gemini.LiveActivityStart{},
-						},
-					})
-				}
-
-				inputMsg := gemini.LiveClientMessage{
-					RealtimeInput: &gemini.LiveRealtimeInput{
-						MediaChunks: []gemini.LiveBlob{
-							{
-								MimeType: "audio/pcm;rate=16000",
-								Data:     clientMsg.Data,
-							},
-						},
-					},
-				}
-				_ = s.sendToActiveGemini(inputMsg)
 			}
 
 		case "pass_turn":
 			s.activityMu.Lock()
 			s.isProcessingTurn = true
 			s.droppingAudio = false
-			wasSpeaking := s.isStudentSpeaking
-			s.isStudentSpeaking = false
+			chunksToSend := s.userAudioBuffer
+			s.userAudioBuffer = nil
 			turnStartTime := time.Now()
 			s.lastTurnTime = turnStartTime
 			s.activityMu.Unlock()
 
-			if wasSpeaking {
-				_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-					RealtimeInput: &gemini.LiveRealtimeInput{
-						ActivityEnd: &gemini.LiveActivityEnd{},
+			if len(chunksToSend) > 0 {
+				log.Printf("[RollingSession] 📤 Streaming %d buffered audio chunks to Gemini upon pass_turn...", len(chunksToSend))
+				for _, chunk := range chunksToSend {
+					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+						RealtimeInput: &gemini.LiveRealtimeInput{
+							MediaChunks: []gemini.LiveBlob{chunk},
+						},
+					})
+				}
+				passMsg := gemini.LiveClientMessage{
+					ClientContent: &gemini.LiveClientContent{
+						TurnComplete: true,
 					},
-				})
-			}
+				}
+				if err := s.sendToActiveGemini(passMsg); err != nil {
+					log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
+					if rErr := s.doRollover(ctx); rErr == nil {
+						_ = s.sendToActiveGemini(passMsg)
+					}
+				} else {
+					// Turn Watchdog: If Gemini gives zero response after 12s, auto-recover seamlessly!
+					go func(sentTime time.Time, retryMsg gemini.LiveClientMessage) {
+						time.Sleep(12 * time.Second)
+						s.activityMu.Lock()
+						stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
+						s.activityMu.Unlock()
 
-			passMsg := gemini.LiveClientMessage{
-				ClientContent: &gemini.LiveClientContent{
-					TurnComplete: true,
-				},
-			}
-			if err := s.sendToActiveGemini(passMsg); err != nil {
-				log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
-				if rErr := s.doRollover(ctx); rErr == nil {
-					_ = s.sendToActiveGemini(passMsg)
+						if stalled {
+							log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s). Seamlessly refreshing connection and retrying turn...")
+							if rErr := s.doRollover(ctx); rErr == nil {
+								_ = s.sendToActiveGemini(retryMsg)
+							}
+						}
+					}(turnStartTime, passMsg)
 				}
 			} else {
-				// Turn Watchdog: If Gemini gives zero response after 12s, auto-recover seamlessly!
-				go func(sentTime time.Time, retryMsg gemini.LiveClientMessage) {
-					time.Sleep(12 * time.Second)
-					s.activityMu.Lock()
-					stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
-					s.activityMu.Unlock()
-
-					if stalled {
-						log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s). Seamlessly refreshing connection and retrying turn...")
-						if rErr := s.doRollover(ctx); rErr == nil {
-							_ = s.sendToActiveGemini(retryMsg)
-						}
-					}
-				}(turnStartTime, passMsg)
+				log.Printf("[RollingSession] ℹ️ Empty audio buffer on pass_turn. Sending text prompt...")
+				passMsg := gemini.LiveClientMessage{
+					ClientContent: &gemini.LiveClientContent{
+						Turns: []gemini.LiveContent{
+							{
+								Role: "user",
+								Parts: []gemini.LivePart{
+									{Text: "[The student passed the turn to you without speaking. Please encourage them gently, and ask an open question to invite them to speak.]"},
+								},
+							},
+						},
+						TurnComplete: true,
+					},
+				}
+				if err := s.sendToActiveGemini(passMsg); err != nil {
+					log.Printf("[RollingSession] Error writing prompt to Gemini: %v", err)
+				}
 			}
 
 		case "bookmark":
