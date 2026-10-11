@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for Google Cloud Run
 # Stage 1: Build binary with pure Go SQLite (CGO_ENABLED=0)
-FROM golang:1.22-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /src
 

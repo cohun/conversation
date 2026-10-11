@@ -1,0 +1,8 @@
+.git
+.gitignore
+.env
+data/
+*.log
+scratch/
+Dockerfile*
+.DS_Store
