@@ -121,7 +121,8 @@ func (s *RollingLiveSession) buildContinuationPrompt() string {
 			"1. Do NOT greet the student again, do NOT re-introduce yourself, and do NOT restart the lesson.\n"+
 			"2. Maintain your warm, natural conversational teacher tone.\n"+
 			"3. Continue directly from the ongoing conversation below.\n"+
-			"4. When the student speaks, follow your 3-phase cycle: (1) gentle error correction, (2) brief explanation or practice drill, (3) conversational response with an open question.\n\n"+
+			"4. When the student speaks, follow your 3-phase cycle: (1) gentle error correction, (2) brief explanation or practice drill, (3) conversational response with an open question.\n"+
+			"5. The student may conclude their thought with 'Your turn!'. When the turn is handed to you, respond promptly.\n\n"+
 			"Recent Conversation Transcript:\n",
 		s.targetPersona.Name,
 		s.profile.DisplayName,

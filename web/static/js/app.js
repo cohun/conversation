@@ -1334,7 +1334,7 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           if (orb && this.currentCall && this.currentCall.state === 'listening') {
             if (rms > 0.015) {
               orb.style.boxShadow = '0 0 28px rgba(78, 124, 99, 0.7)';
-              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Ha befejezted, koppints ide: "Átadom a szót"';
+              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Ha befejezted: „Your turn!” vagy koppints az átadáshoz.';
             } else {
               orb.style.boxShadow = '';
             }
@@ -1376,8 +1376,8 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
 
         case 'listening':
           statusText.textContent = 'Connected';
-          stateLabel.textContent = 'Listening to you...';
-          bargeInTip.textContent = 'Speak anytime, then tap "Átadom a szót" for the response!';
+          stateLabel.textContent = 'Listening to you... (Beszélj bátran!)';
+          bargeInTip.textContent = 'Mondd: „Your turn!” vagy koppints az átadáshoz!';
           this.setPassTurnButtonMode('pass');
           break;
 
@@ -1390,8 +1390,8 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
 
         case 'thinking':
           statusText.textContent = 'Connected';
-          stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} is thinking...`;
-          bargeInTip.textContent = 'Preparing response...';
+          stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} gondolkodik...`;
+          bargeInTip.textContent = 'Válasz előkészítése... 🔔';
           this.setPassTurnButtonMode('pass');
           break;
 

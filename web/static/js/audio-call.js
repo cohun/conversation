@@ -46,6 +46,11 @@ class AudioCallManager {
     this.startTime = null;
     this.timerInterval = null;
 
+    // Voice Trigger ("Your turn!") & Waiting Chime Heartbeat
+    this.recognition = null;
+    this.isRecognitionActive = false;
+    this.waitingChimeInterval = null;
+
     // Cache synthesized voices
     this.cachedVoices = [];
     if ('speechSynthesis' in window) {
@@ -65,10 +70,13 @@ class AudioCallManager {
     if (!this.outputGain || !this.audioCtx) return;
 
     const isMobile = this.isMobileDevice();
-    const targetGain = (isMobile && this.isSpeakerphone) ? 4.2 : (isMobile ? 1.2 : 1.15);
+    // Mobile Loudspeaker / Car Bluetooth: 2.3x (clean, distortion-free headroom)
+    // Mobile Earpiece: 1.2x
+    // Desktop: 1.15x
+    const targetGain = (isMobile && this.isSpeakerphone) ? 2.3 : (isMobile ? 1.2 : 1.15);
     this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
-    console.log(`[AudioCall] 🔊 Audio route: CegAgy Chain (Compressor -> Gain ${targetGain}x -> Destination) [${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker' : 'Mobile Earpiece') : 'Desktop 1.15x'}]`);
+    console.log(`[AudioCall] 🔊 Audio route: CegAgy Chain (Compressor -> Gain ${targetGain}x -> Destination) [${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker (Car-tuned 2.3x)' : 'Mobile Earpiece') : 'Desktop 1.15x'}]`);
   }
 
   toggleSpeakerphone() {
@@ -174,18 +182,19 @@ class AudioCallManager {
 
       // 3. Audio Graph Setup: Source -> Compressor -> Gain -> Destination (CegAgy Architecture)
       // Desktop: 1.15x gain (clean, comfortable listening volume for headphones/speakers)
-      // Mobile: 4.2x gain + Dynamics Compressor (CegAgy hardware tuned for phone loudspeakers)
-      const targetGain = (isMobile && this.isSpeakerphone) ? 4.2 : (isMobile ? 1.2 : 1.15);
+      // Mobile: 2.3x gain + Dynamics Compressor (tuned for clean car audio & phone loudspeakers without clipping)
+      const targetGain = (isMobile && this.isSpeakerphone) ? 2.3 : (isMobile ? 1.2 : 1.15);
       this.outputGain = this.audioCtx.createGain();
       this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
       this.compressor = this.audioCtx.createDynamicsCompressor();
       if (isMobile) {
-        this.compressor.threshold.setValueAtTime(-28, this.audioCtx.currentTime);
-        this.compressor.knee.setValueAtTime(35, this.audioCtx.currentTime);
-        this.compressor.ratio.setValueAtTime(16, this.audioCtx.currentTime);
-        this.compressor.attack.setValueAtTime(0.002, this.audioCtx.currentTime);
-        this.compressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
+        // Tuned for automobile speakers & phone loudspeaker: gentle, broadcast-quality compression without harsh clipping
+        this.compressor.threshold.setValueAtTime(-20, this.audioCtx.currentTime);
+        this.compressor.knee.setValueAtTime(25, this.audioCtx.currentTime);
+        this.compressor.ratio.setValueAtTime(4, this.audioCtx.currentTime);
+        this.compressor.attack.setValueAtTime(0.005, this.audioCtx.currentTime);
+        this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
       } else {
         this.compressor.threshold.setValueAtTime(-10, this.audioCtx.currentTime);
         this.compressor.knee.setValueAtTime(15, this.audioCtx.currentTime);
@@ -197,6 +206,9 @@ class AudioCallManager {
       // Compressor connects to OutputGain, OutputGain connects to Destination!
       this.compressor.connect(this.outputGain);
       this.outputGain.connect(this.audioCtx.destination);
+
+      // Initialize Voice Recognition for hands-free "Your turn!" triggering
+      this.initVoiceRecognition();
 
       // 4. Request initial microphone permission within the user gesture
       const permStream = await navigator.mediaDevices.getUserMedia({
@@ -474,6 +486,7 @@ class AudioCallManager {
 
   // Speak text using Web Speech API synthesis (fallback)
   speakText(rawText) {
+    this.stopWaitingChimeHeartbeat();
     if (!('speechSynthesis' in window)) {
       console.warn('[AudioCall] SpeechSynthesis not supported in browser');
       return;
@@ -532,6 +545,7 @@ class AudioCallManager {
 
   // Enqueue 24kHz PCM chunk received from Gemini Live
   enqueueAudioChunk(base64Data) {
+    this.stopWaitingChimeHeartbeat();
     if (!this.audioCtx || this.audioCtx.state === 'closed') return;
 
     try {
@@ -638,6 +652,7 @@ class AudioCallManager {
   }
 
   flushAudioQueue() {
+    this.stopWaitingChimeHeartbeat();
     if (this.turnCompletionTimer) {
       clearTimeout(this.turnCompletionTimer);
       this.turnCompletionTimer = null;
@@ -671,6 +686,7 @@ class AudioCallManager {
 
     this.isAiSpeaking = speaking;
     if (speaking) {
+      this.stopWaitingChimeHeartbeat();
       this.setState('speaking');
     }
   }
@@ -679,17 +695,178 @@ class AudioCallManager {
     this.state = newState;
     const isMobile = this.isMobileDevice();
 
-    if (isMobile && this.isSpeakerphone) {
-      if (newState === 'listening') {
-        // Diák köre: mikrofon indítása
+    if (newState === 'listening') {
+      if (isMobile && this.isSpeakerphone) {
+        // Student turn: start microphone capture
         await this.startMicrophoneCapture();
-      } else if (newState === 'thinking' || newState === 'speaking' || newState === 'connecting') {
-        // Sarah köre: Hardware Teardown (t.stop()) -> telefon azonnal visszatér tiszta sztereó média-hangszóró módba!
+      }
+      // Start listening for hands-free "Your turn!" trigger
+      this.startVoiceRecognition();
+    } else {
+      // Not listening: stop speech recognition
+      this.stopVoiceRecognition();
+      if (newState !== 'thinking') {
+        this.stopWaitingChimeHeartbeat();
+      }
+      if (isMobile && this.isSpeakerphone) {
+        // Sarah turn: Hardware Teardown (stops mic so mobile switches cleanly to stereo loudspeaker)
         this.stopMicrophoneCapture();
       }
     }
 
     this.onStateChange(newState);
+  }
+
+  // Play discrete, gentle dual-tone waiting chime (528Hz + 660Hz)
+  playWaitingChime() {
+    if (!this.audioCtx || this.audioCtx.state === 'closed') return;
+    if (this.audioCtx.state === 'suspended') {
+      try {
+        this.audioCtx.resume();
+      } catch (e) {}
+    }
+
+    try {
+      const now = this.audioCtx.currentTime;
+
+      // Soft envelope to avoid clicks and provide gentle acoustic decay
+      const chimeGain = this.audioCtx.createGain();
+      chimeGain.gain.setValueAtTime(0.0001, now);
+      // Gentle 25ms attack ramp
+      chimeGain.gain.exponentialRampToValueAtTime(0.20, now + 0.025);
+      // Smooth exponential decay over 650ms
+      chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+
+      // Dual harmonic pure sine waves: 528Hz (warm bell tone) + 660Hz (pure major third harmonic)
+      const osc1 = this.audioCtx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(528, now);
+
+      const osc2 = this.audioCtx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(660, now);
+
+      osc1.connect(chimeGain);
+      osc2.connect(chimeGain);
+      chimeGain.connect(this.audioCtx.destination);
+
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.70);
+      osc2.stop(now + 0.70);
+      console.log('[AudioCall] 🔔 Discrete waiting chime played');
+    } catch (e) {
+      console.warn('[AudioCall] Error playing waiting chime:', e);
+    }
+  }
+
+  startWaitingChimeHeartbeat() {
+    this.stopWaitingChimeHeartbeat();
+    // Play immediately upon turn passing for instant driver reassurance
+    this.playWaitingChime();
+
+    // Repeat every 5 seconds while in thinking state until AI starts speaking
+    this.waitingChimeInterval = setInterval(() => {
+      if (this.state === 'thinking' && !this.isAiSpeaking) {
+        this.playWaitingChime();
+      } else {
+        this.stopWaitingChimeHeartbeat();
+      }
+    }, 5000);
+  }
+
+  stopWaitingChimeHeartbeat() {
+    if (this.waitingChimeInterval) {
+      clearInterval(this.waitingChimeInterval);
+      this.waitingChimeInterval = null;
+    }
+  }
+
+  // Hands-Free Voice Trigger Recognition ("Your turn!", "Over to you", etc.)
+  initVoiceRecognition() {
+    const SpeechRecClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecClass) {
+      console.log('[AudioCall] SpeechRecognition API not available in this browser.');
+      return;
+    }
+
+    try {
+      this.recognition = new SpeechRecClass();
+      this.recognition.continuous = true;
+      this.recognition.interimResults = true;
+      this.recognition.lang = 'en-US';
+      this.recognition.maxAlternatives = 3;
+
+      this.recognition.onresult = (event) => {
+        if (this.state !== 'listening' || this.isAiSpeaking) return;
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const res = event.results[i];
+          for (let j = 0; j < res.length; j++) {
+            const transcript = (res[j].transcript || '').toLowerCase().trim();
+            if (this.matchesVoiceTrigger(transcript)) {
+              console.log(`[AudioCall] 🎯 Voice trigger detected: "${transcript}"! Passing turn to partner.`);
+              this.passTurn();
+              return;
+            }
+          }
+        }
+      };
+
+      this.recognition.onerror = (event) => {
+        if (event.error !== 'no-speech' && event.error !== 'aborted') {
+          console.warn('[AudioCall] SpeechRecognition notice:', event.error);
+        }
+      };
+
+      this.recognition.onend = () => {
+        this.isRecognitionActive = false;
+        if (this.state === 'listening' && !this.isAiSpeaking) {
+          setTimeout(() => {
+            if (this.state === 'listening' && !this.isAiSpeaking) {
+              this.startVoiceRecognition();
+            }
+          }, 300);
+        }
+      };
+      console.log('[AudioCall] 🎙️ SpeechRecognition voice trigger initialized ("Your turn!")');
+    } catch (e) {
+      console.warn('[AudioCall] Could not initialize SpeechRecognition:', e);
+      this.recognition = null;
+    }
+  }
+
+  matchesVoiceTrigger(text) {
+    if (!text) return false;
+    const clean = text.replace(/[^a-z0-9\s]/gi, ' ').toLowerCase();
+    const triggers = [
+      /\byour\s+turn\b/,
+      /\byou\s*re\s+turn\b/,
+      /\bur\s+turn\b/,
+      /\bover\s+to\s+you\b/,
+      /\bwhat\s+do\s+you\s+think\b/,
+      /\bgo\s+ahead\b/
+    ];
+    return triggers.some((re) => re.test(clean));
+  }
+
+  startVoiceRecognition() {
+    if (!this.recognition || this.isRecognitionActive) return;
+    try {
+      this.recognition.start();
+      this.isRecognitionActive = true;
+      console.log('[AudioCall] 🎙️ Voice recognition active: listening for "Your turn!"...');
+    } catch (e) {
+      this.isRecognitionActive = false;
+    }
+  }
+
+  stopVoiceRecognition() {
+    if (!this.recognition) return;
+    this.isRecognitionActive = false;
+    try {
+      this.recognition.abort();
+    } catch (e) {}
   }
 
   passTurn() {
@@ -702,11 +879,15 @@ class AudioCallManager {
 
     this.turnCompleteReceived = false;
     this.setAiSpeaking(false);
+    this.stopVoiceRecognition();
 
-    // Mobilon: Hardware Teardown azonnal a gomb megnyomásakor
+    // Mobilon: Hardware Teardown azonnal a gomb megnyomásakor / szót átadáskor
     if (this.isMobileDevice() && this.isSpeakerphone) {
       this.stopMicrophoneCapture();
     }
+
+    // Play immediate feedback chime and start 5-second waiting heartbeat
+    this.startWaitingChimeHeartbeat();
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       console.log(`[AudioCall] 🎯 passTurn: passing turn to partner (chunks streamed in turn: ${this.sentAudioChunkCount})`);
@@ -717,6 +898,7 @@ class AudioCallManager {
       this.thinkingTimer = setTimeout(() => {
         if (this.state === 'thinking') {
           console.warn('[AudioCall] Response timeout - switching back to listening');
+          this.stopWaitingChimeHeartbeat();
           this.setState('listening');
         }
       }, 15000);
@@ -729,7 +911,8 @@ class AudioCallManager {
   }
 
   async manualInterrupt() {
-    console.log('[AudioCall] Manual interrupt requested by user button');
+    console.log('[AudioCall] Manual interrupt requested by user');
+    this.stopWaitingChimeHeartbeat();
     this.flushAudioQueue();
     await this.setState('listening');
 
@@ -770,6 +953,9 @@ class AudioCallManager {
   endCall() {
     if (this.state === 'ended') return;
     this.state = 'ended';
+
+    this.stopWaitingChimeHeartbeat();
+    this.stopVoiceRecognition();
 
     if (this.timerInterval) {
       clearInterval(this.timerInterval);

@@ -304,6 +304,11 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 		profile.PhoneticNote,
 	)
 
+	// Add Hands-Free Spoken Interaction Instruction
+	systemText += "\n\n[Hands-Free Spoken Interaction]\n" +
+		"The student may be driving or practicing hands-free. The student concludes their turn either by saying 'Your turn!' (or 'Over to you!') or by tapping the app button.\n" +
+		"When you receive the turn, respond promptly and naturally in your companion role without delay. Do not cut in while the student is speaking."
+
 	// Add Resume Context if applicable
 	if resume != nil {
 		if continuationContext == "" {

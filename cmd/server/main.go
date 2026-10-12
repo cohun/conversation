@@ -510,13 +510,13 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.12-stateless-hmac-session-fix"
+	const AppVersion = "2.4.13-handsfree-audio-tune"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
-			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker 4.2x + Compressor / Desktop Clean 1.15x)",
+			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker Car-Tuned 2.3x + Broadcast Compressor / Desktop Clean 1.15x)",
 			"isolation":        "CegAgy Hardware Teardown (track.stop() for pure media speakerphone)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
