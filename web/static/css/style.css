@@ -127,6 +127,7 @@ body {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -134,20 +135,22 @@ body {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
-  width: 40px;
-  height: 40px;
-  display: flex;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
 }
 
 .icon-btn:hover {
   background: var(--bg-surface-elevated);
+  border-color: var(--sage-400);
   color: var(--text-primary);
-  border-color: var(--border-focus);
+  transform: translateY(-1px);
 }
 
 /* User Greeting Banner */
@@ -192,43 +195,29 @@ body {
   color: var(--text-secondary);
 }
 
-.user-banner-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.handshake-guide-btn {
+.handshake-edit-btn {
   background: var(--bg-surface);
-  border: 1px solid var(--sage-200);
+  border: 1px solid var(--sage-300);
   color: var(--sage-700);
   font-size: 0.78rem;
   font-weight: 600;
-  padding: 5px 11px;
+  padding: 6px 14px;
   border-radius: var(--radius-full);
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.handshake-guide-btn:hover {
-  background: var(--sage-100);
-  border-color: var(--sage-400);
+.handshake-edit-btn:hover {
+  background: var(--sage-50);
+  border-color: var(--sage-500);
+  color: var(--sage-900);
   transform: translateY(-1px);
-}
-
-.handshake-edit-btn {
-  background: transparent;
-  border: none;
-  color: var(--sage-600);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 4px;
+  box-shadow: var(--shadow-md);
 }
 
 /* Tab Navigation */
@@ -1267,31 +1256,90 @@ body {
 }
 
 /* ==========================================
-   Header Additions: Admin Badge & Login Trigger
+   Header Additions: Unified Action Badges & Login
    ========================================== */
-.admin-badge-btn {
+.admin-badge-btn,
+.guide-badge-btn,
+.profile-badge-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.admin-badge-btn {
   background: linear-gradient(135deg, #fef3c7, #fde68a);
   border: 1px solid #f59e0b;
   color: #92400e;
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  font-size: 0.8rem;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
-  transition: all 0.2s ease;
 }
 
 .admin-badge-btn:hover {
+  background: #fde047;
+  border-color: #d97706;
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3);
+  box-shadow: 0 3px 8px rgba(245, 158, 11, 0.25);
 }
 
-.admin-crown {
+.guide-badge-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.guide-badge-btn:hover {
+  background: var(--sage-50);
+  border-color: var(--sage-400);
+  color: var(--sage-700);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.guide-badge-btn .guide-icon {
   font-size: 0.95rem;
+}
+
+.profile-badge-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.profile-badge-btn:hover {
+  background: var(--sage-50);
+  border-color: var(--sage-400);
+  color: var(--sage-700);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* On mobile / small container screens, make header buttons uniform 34x34 circles */
+@media (max-width: 480px) {
+  .header-actions {
+    gap: 6px;
+  }
+  .admin-badge-btn,
+  .guide-badge-btn,
+  .profile-badge-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    gap: 0;
+  }
+  .admin-btn-text,
+  .guide-btn-text,
+  .profile-btn-text {
+    display: none;
+  }
 }
 
 .login-trigger-btn {
@@ -2149,25 +2197,27 @@ body {
   position: absolute;
   top: 18px;
   right: 18px;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: #fff;
-  font-size: 1.15rem;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
-  z-index: 5;
+  z-index: 10;
 }
 
 .call-top-guide-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: scale(1.08);
+  background: var(--bg-surface-elevated);
+  border-color: var(--sage-400);
+  color: var(--sage-700);
+  transform: scale(1.05);
+  box-shadow: var(--shadow-md);
 }
 
 

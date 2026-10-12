@@ -82,13 +82,6 @@ class AudioCallManager {
   toggleSpeakerphone() {
     this.isSpeakerphone = !this.isSpeakerphone;
     this.applyAudioRouting();
-    if (this.isMobileDevice()) {
-      if (this.isSpeakerphone && this.state !== 'listening') {
-        this.stopMicrophoneCapture();
-      } else if (!this.isSpeakerphone && !this.micStream) {
-        this.startMicrophoneCapture();
-      }
-    }
     return this.isSpeakerphone;
   }
 
@@ -220,17 +213,9 @@ class AudioCallManager {
         },
       });
 
-      if (isMobile) {
-        // Mobile: Immediate Hardware Teardown! Sarah speaks first!
-        // Releasing microphone tracks immediately returns phone to pure media stereo loudspeaker mode!
-        permStream.getTracks().forEach((track) => track.stop());
-        this.micStream = null;
-        console.log('[AudioCall] 🔊 Mobile initial Hardware Teardown: mic released for Sarah greeting');
-      } else {
-        // Desktop: Maintain persistent mic stream as verified and working
-        this.micStream = permStream;
-        await this.initMicrophoneCapture();
-      }
+      // Maintain persistent microphone stream across all devices (Desktop & Mobile)
+      this.micStream = permStream;
+      await this.initMicrophoneCapture();
 
       // 5. Connect WebSocket to server proxy
       this.connectWebSocket();
@@ -693,13 +678,8 @@ class AudioCallManager {
 
   async setState(newState) {
     this.state = newState;
-    const isMobile = this.isMobileDevice();
 
     if (newState === 'listening') {
-      if (isMobile && this.isSpeakerphone) {
-        // Student turn: start microphone capture
-        await this.startMicrophoneCapture();
-      }
       // Start listening for hands-free "Your turn!" trigger
       this.startVoiceRecognition();
     } else {
@@ -707,10 +687,6 @@ class AudioCallManager {
       this.stopVoiceRecognition();
       if (newState !== 'thinking') {
         this.stopWaitingChimeHeartbeat();
-      }
-      if (isMobile && this.isSpeakerphone) {
-        // Sarah turn: Hardware Teardown (stops mic so mobile switches cleanly to stereo loudspeaker)
-        this.stopMicrophoneCapture();
       }
     }
 
@@ -840,9 +816,11 @@ class AudioCallManager {
     if (!text) return false;
     const clean = text.replace(/[^a-z0-9\s]/gi, ' ').toLowerCase();
     const triggers = [
-      /\byour\s+turn\b/,
+      /\byour?\s+turn\b/,
       /\byou\s*re\s+turn\b/,
       /\bur\s+turn\b/,
+      /\byour?\s+tern\b/,
+      /\byour?\s+time\b/,
       /\bover\s+to\s+you\b/,
       /\bwhat\s+do\s+you\s+think\b/,
       /\bgo\s+ahead\b/
@@ -880,11 +858,6 @@ class AudioCallManager {
     this.turnCompleteReceived = false;
     this.setAiSpeaking(false);
     this.stopVoiceRecognition();
-
-    // Mobilon: Hardware Teardown azonnal a gomb megnyomásakor / szót átadáskor
-    if (this.isMobileDevice() && this.isSpeakerphone) {
-      this.stopMicrophoneCapture();
-    }
 
     // Play immediate feedback chime and start 5-second waiting heartbeat
     this.startWaitingChimeHeartbeat();

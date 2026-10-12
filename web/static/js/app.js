@@ -189,13 +189,13 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       document.getElementById('endCallBtn').addEventListener('click', () => this.endActiveCall());
 
       // Guide handlers
-      const guideTabBtn = document.getElementById('guideTabBtn');
-      if (guideTabBtn) {
-        guideTabBtn.addEventListener('click', () => this.switchTab('guide'));
+      const guideBtn = document.getElementById('guideBtn');
+      if (guideBtn) {
+        guideBtn.addEventListener('click', () => this.openModal('guideModal'));
       }
       const callGuideBtn = document.getElementById('callGuideBtn');
       if (callGuideBtn) {
-        callGuideBtn.addEventListener('click', () => this.openModal('callGuideModal'));
+        callGuideBtn.addEventListener('click', () => this.openModal('guideModal'));
       }
     },
 
@@ -205,8 +205,6 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       });
       document.getElementById('tabPersonas').classList.toggle('active', tabName === 'personas');
       document.getElementById('tabTopics').classList.toggle('active', tabName === 'topics');
-      const tabGuide = document.getElementById('tabGuide');
-      if (tabGuide) tabGuide.classList.toggle('active', tabName === 'guide');
     },
 
     checkURLParams() {

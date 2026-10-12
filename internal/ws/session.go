@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -46,7 +45,6 @@ type RollingLiveSession struct {
 	droppingAudio     bool
 	lastTurnTime          time.Time
 	userAudioChunksInTurn int
-	userAudioBytes        []byte
 }
 
 func newRollingLiveSession(
@@ -228,7 +226,6 @@ func (s *RollingLiveSession) handleClientInterrupt() {
 	s.isProcessingTurn = false
 	s.droppingAudio = true
 	s.userAudioChunksInTurn = 0
-	s.userAudioBytes = nil
 	s.activityMu.Unlock()
 
 	// 1. Tell browser audio has stopped immediately
@@ -311,6 +308,7 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 			if serverMsg.ServerContent.ModelTurn != nil {
 				s.activityMu.Lock()
 				s.isAiSpeaking = true
+				s.isProcessingTurn = false
 				s.isStudentSpeaking = false
 				s.activityMu.Unlock()
 
@@ -339,7 +337,6 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 				s.isProcessingTurn = false
 				s.droppingAudio = false
 				s.userAudioChunksInTurn = 0
-				s.userAudioBytes = nil
 				s.lastTurnTime = time.Now()
 				s.activityMu.Unlock()
 
@@ -475,73 +472,50 @@ func (s *RollingLiveSession) Run() {
 		case "audio":
 			if clientMsg.Data != "" {
 				s.activityMu.Lock()
-				canBuffer := !s.isAiSpeaking && !s.isProcessingTurn
-				if canBuffer {
-					raw, err := base64.StdEncoding.DecodeString(clientMsg.Data)
-					if err == nil && len(raw) > 0 {
-						s.userAudioBytes = append(s.userAudioBytes, raw...)
-						s.userAudioChunksInTurn++
-						// Cap buffer at 60 seconds of speech
-						if len(s.userAudioBytes) > 1920000 {
-							s.userAudioBytes = s.userAudioBytes[len(s.userAudioBytes)-1920000:]
-						}
-						if s.userAudioChunksInTurn%20 == 1 {
-							log.Printf("[RollingSession] 🎤 Buffered student speech (%d chunks, %d bytes)...", s.userAudioChunksInTurn, len(s.userAudioBytes))
-						}
+				canStream := !s.isAiSpeaking && !s.isProcessingTurn
+				if canStream {
+					s.userAudioChunksInTurn++
+					if s.userAudioChunksInTurn%20 == 1 {
+						log.Printf("[RollingSession] 🎤 Streaming student speech to Gemini (%d chunks in turn)...", s.userAudioChunksInTurn)
 					}
 				}
 				s.activityMu.Unlock()
+
+				if canStream {
+					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+						RealtimeInput: &gemini.LiveRealtimeInput{
+							MediaChunks: []gemini.LiveBlob{
+								{
+									MimeType: "audio/pcm;rate=16000",
+									Data:     clientMsg.Data,
+								},
+							},
+						},
+					})
+				}
 			}
 
 		case "pass_turn":
 			s.activityMu.Lock()
 			s.isProcessingTurn = true
 			s.droppingAudio = false
-			audioBytesToSend := s.userAudioBytes
-			chunksCount := s.userAudioChunksInTurn
-			s.userAudioBytes = nil
+			chunksSent := s.userAudioChunksInTurn
 			s.userAudioChunksInTurn = 0
 			turnStartTime := time.Now()
 			s.lastTurnTime = turnStartTime
 			s.activityMu.Unlock()
 
-			if len(audioBytesToSend) > 0 {
-				log.Printf("[RollingSession] 🎯 pass_turn received (%d audio chunks, %d bytes): streaming RealtimeInput to Gemini...", chunksCount, len(audioBytesToSend))
-				// Slice audio into 100ms chunks (3200 bytes at 16kHz 16-bit mono) and stream via RealtimeInput
-				const chunkSize = 3200
-				for i := 0; i < len(audioBytesToSend); i += chunkSize {
-					end := i + chunkSize
-					if end > len(audioBytesToSend) {
-						end = len(audioBytesToSend)
-					}
-					chunk := audioBytesToSend[i:end]
-					b64 := base64.StdEncoding.EncodeToString(chunk)
-					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-						RealtimeInput: &gemini.LiveRealtimeInput{
-							MediaChunks: []gemini.LiveBlob{
-								{
-									MimeType: "audio/pcm;rate=16000",
-									Data:     b64,
-								},
-							},
-						},
-					})
-				}
-				// Signal turn completion to Gemini Live
-				passMsg := gemini.LiveClientMessage{
+			var passMsg gemini.LiveClientMessage
+			if chunksSent > 0 {
+				log.Printf("[RollingSession] 🎯 pass_turn received (%d audio chunks streamed): committing turn to Gemini...", chunksSent)
+				passMsg = gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						TurnComplete: true,
 					},
 				}
-				if err := s.sendToActiveGemini(passMsg); err != nil {
-					log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
-					if rErr := s.doRollover(ctx); rErr == nil {
-						_ = s.sendToActiveGemini(passMsg)
-					}
-				}
 			} else {
 				log.Printf("[RollingSession] ℹ️ Zero audio chunks on pass_turn. Sending gentle prompt to Gemini...")
-				passMsg := gemini.LiveClientMessage{
+				passMsg = gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						Turns: []gemini.LiveContent{
 							{
@@ -554,8 +528,11 @@ func (s *RollingLiveSession) Run() {
 						TurnComplete: true,
 					},
 				}
-				if err := s.sendToActiveGemini(passMsg); err != nil {
-					log.Printf("[RollingSession] Error writing prompt to Gemini: %v", err)
+			}
+			if err := s.sendToActiveGemini(passMsg); err != nil {
+				log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
+				if rErr := s.doRollover(ctx); rErr == nil {
+					_ = s.sendToActiveGemini(passMsg)
 				}
 			}
 
