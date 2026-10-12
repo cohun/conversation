@@ -187,16 +187,6 @@ If the user asks to save the topic, invoke the 'save_conversation' tool.`;
       document.getElementById('pulseCoreOrb').addEventListener('click', () => this.passCallTurn());
       document.getElementById('bookmarkBtn').addEventListener('click', () => this.bookmarkCallTopic());
       document.getElementById('endCallBtn').addEventListener('click', () => this.endActiveCall());
-
-      // Guide handlers
-      const guideBtn = document.getElementById('guideBtn');
-      if (guideBtn) {
-        guideBtn.addEventListener('click', () => this.openModal('guideModal'));
-      }
-      const callGuideBtn = document.getElementById('callGuideBtn');
-      if (callGuideBtn) {
-        callGuideBtn.addEventListener('click', () => this.openModal('guideModal'));
-      }
     },
 
     switchTab(tabName) {
@@ -1375,7 +1365,6 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       const statusText = document.getElementById('callStatusText');
       const stateLabel = document.getElementById('callStateLabel');
       const bargeInTip = document.getElementById('callBargeInTip');
-      const orbIcon = document.getElementById('pulseOrbIcon');
 
       switch (state) {
         case 'connecting':
@@ -1383,9 +1372,6 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           stateLabel.textContent = 'Establishing voice connection...';
           bargeInTip.textContent = 'Connecting to voice session...';
           this.setPassTurnButtonMode('pass');
-          if (orbIcon) {
-            orbIcon.innerHTML = `<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>`;
-          }
           break;
 
         case 'listening':
@@ -1393,9 +1379,6 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           stateLabel.textContent = 'Listening to you... (Beszélj bátran!)';
           bargeInTip.textContent = 'Mondd: „Your turn!” vagy koppints az átadáshoz!';
           this.setPassTurnButtonMode('pass');
-          if (orbIcon) {
-            orbIcon.innerHTML = `<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>`;
-          }
           break;
 
         case 'speaking':
@@ -1403,19 +1386,13 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} is speaking...`;
           bargeInTip.textContent = 'Tap "Félbeszakítás" (or the orb) to interrupt!';
           this.setPassTurnButtonMode('interrupt');
-          if (orbIcon) {
-            orbIcon.innerHTML = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>`;
-          }
           break;
 
         case 'thinking':
           statusText.textContent = 'Connected';
-          stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} gondolkodik... ⏳`;
+          stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} gondolkodik...`;
           bargeInTip.textContent = 'Válasz előkészítése... 🔔';
-          this.setPassTurnButtonMode('thinking');
-          if (orbIcon) {
-            orbIcon.innerHTML = `<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2.5" stroke-dasharray="32" stroke-dashoffset="12" fill="none"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></circle>`;
-          }
+          this.setPassTurnButtonMode('pass');
           break;
 
         case 'ended':
@@ -1433,23 +1410,15 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       if (!btn) return;
 
       if (mode === 'interrupt') {
-        btn.classList.remove('primary-pass', 'thinking-mode');
+        btn.classList.remove('primary-pass');
         btn.classList.add('interrupt-mode');
         btn.title = 'Félbeszakítás / Interrupt';
         if (label) label.textContent = 'Félbeszakítás';
         if (icon) {
           icon.innerHTML = `<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"></rect>`;
         }
-      } else if (mode === 'thinking') {
-        btn.classList.remove('primary-pass', 'interrupt-mode');
-        btn.classList.add('thinking-mode');
-        btn.title = 'Partner gondolkodik... / Partner is thinking';
-        if (label) label.textContent = 'Gondolkodik... ⏳';
-        if (icon) {
-          icon.innerHTML = `<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2.5" stroke-dasharray="32" stroke-dashoffset="12" fill="none"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></circle>`;
-        }
       } else {
-        btn.classList.remove('interrupt-mode', 'thinking-mode');
+        btn.classList.remove('interrupt-mode');
         btn.classList.add('primary-pass');
         btn.title = 'Átadom a szót / Your Turn';
         if (label) label.textContent = 'Átadom a szót';

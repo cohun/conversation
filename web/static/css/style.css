@@ -127,7 +127,6 @@ body {
 
 .header-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
 }
 
@@ -135,22 +134,20 @@ body {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
 }
 
 .icon-btn:hover {
   background: var(--bg-surface-elevated);
-  border-color: var(--sage-400);
   color: var(--text-primary);
-  transform: translateY(-1px);
+  border-color: var(--border-focus);
 }
 
 /* User Greeting Banner */
@@ -196,28 +193,14 @@ body {
 }
 
 .handshake-edit-btn {
-  background: var(--bg-surface);
-  border: 1px solid var(--sage-300);
-  color: var(--sage-700);
-  font-size: 0.78rem;
+  background: transparent;
+  border: none;
+  color: var(--sage-600);
+  font-size: 0.8rem;
   font-weight: 600;
-  padding: 6px 14px;
-  border-radius: var(--radius-full);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.handshake-edit-btn:hover {
-  background: var(--sage-50);
-  border-color: var(--sage-500);
-  color: var(--sage-900);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  text-decoration: underline;
+  padding: 4px;
 }
 
 /* Tab Navigation */
@@ -1038,22 +1021,6 @@ body {
   50% { box-shadow: 0 0 0 10px rgba(209, 107, 71, 0); }
 }
 
-.call-control-btn.thinking-mode .call-control-circle {
-  background: var(--amber-100);
-  border-color: var(--amber-500);
-  color: var(--amber-700);
-  width: 60px;
-  height: 60px;
-  font-size: 1.4rem;
-  animation: thinkingPulse 1.8s infinite ease-in-out;
-  cursor: wait;
-}
-
-@keyframes thinkingPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.45); }
-  50% { box-shadow: 0 0 0 10px rgba(217, 119, 6, 0); }
-}
-
 .call-control-label {
   font-size: 0.72rem;
   font-weight: 600;
@@ -1256,90 +1223,31 @@ body {
 }
 
 /* ==========================================
-   Header Additions: Unified Action Badges & Login
+   Header Additions: Admin Badge & Login Trigger
    ========================================== */
-.admin-badge-btn,
-.guide-badge-btn,
-.profile-badge-btn {
+.admin-badge-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  text-decoration: none;
-}
-
-.admin-badge-btn {
+  gap: 5px;
   background: linear-gradient(135deg, #fef3c7, #fde68a);
   border: 1px solid #f59e0b;
   color: #92400e;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
+  transition: all 0.2s ease;
 }
 
 .admin-badge-btn:hover {
-  background: #fde047;
-  border-color: #d97706;
   transform: translateY(-1px);
-  box-shadow: 0 3px 8px rgba(245, 158, 11, 0.25);
+  box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3);
 }
 
-.guide-badge-btn {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
-.guide-badge-btn:hover {
-  background: var(--sage-50);
-  border-color: var(--sage-400);
-  color: var(--sage-700);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.guide-badge-btn .guide-icon {
+.admin-crown {
   font-size: 0.95rem;
-}
-
-.profile-badge-btn {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
-.profile-badge-btn:hover {
-  background: var(--sage-50);
-  border-color: var(--sage-400);
-  color: var(--sage-700);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-/* On mobile / small container screens, make header buttons uniform 34x34 circles */
-@media (max-width: 480px) {
-  .header-actions {
-    gap: 6px;
-  }
-  .admin-badge-btn,
-  .guide-badge-btn,
-  .profile-badge-btn {
-    width: 34px;
-    height: 34px;
-    padding: 0;
-    gap: 0;
-  }
-  .admin-btn-text,
-  .guide-btn-text,
-  .profile-btn-text {
-    display: none;
-  }
 }
 
 .login-trigger-btn {
@@ -2124,100 +2032,4 @@ body {
   font-weight: 600;
   border-radius: var(--radius-full);
 }
-
-/* Guide Tab & Cards Grid */
-.guide-cards-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 14px;
-}
-
-.guide-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 18px 20px;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-}
-
-.guide-card:hover {
-  border-color: var(--sage-300);
-  box-shadow: var(--shadow-md);
-}
-
-.guide-card.highlight-card {
-  background: linear-gradient(135deg, rgba(78, 124, 99, 0.08), rgba(217, 119, 6, 0.06));
-  border: 1.5px solid var(--sage-400);
-}
-
-.guide-card-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.guide-card-icon {
-  font-size: 1.5rem;
-}
-
-.guide-card-header h3 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.guide-card p {
-  font-size: 0.9rem;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  margin: 0 0 8px 0;
-}
-
-.guide-card p:last-child {
-  margin-bottom: 0;
-}
-
-.guide-card ul {
-  margin: 6px 0 0 18px;
-  padding: 0;
-  font-size: 0.88rem;
-  line-height: 1.55;
-  color: var(--text-secondary);
-}
-
-.guide-card li {
-  margin-bottom: 6px;
-}
-
-.call-top-guide-btn {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-  z-index: 10;
-}
-
-.call-top-guide-btn:hover {
-  background: var(--bg-surface-elevated);
-  border-color: var(--sage-400);
-  color: var(--sage-700);
-  transform: scale(1.05);
-  box-shadow: var(--shadow-md);
-}
-
 

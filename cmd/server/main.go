@@ -510,14 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.15-persistent-mic-and-clean-ui"
+	const AppVersion = "2.4.13-handsfree-audio-tune"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
 			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker Car-Tuned 2.3x + Broadcast Compressor / Desktop Clean 1.15x)",
-			"isolation":        "Persistent Mic Stream + Software Gating + Real-time Streaming",
+			"isolation":        "CegAgy Hardware Teardown (track.stop() for pure media speakerphone)",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})
