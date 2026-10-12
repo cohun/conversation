@@ -353,6 +353,11 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 					},
 				},
 			},
+			RealtimeInputConfig: &gemini.LiveRealtimeInputConfig{
+				AutomaticActivityDetection: &gemini.LiveAutomaticActivityDetection{
+					Disabled: true,
+				},
+			},
 			SystemInstruction: &gemini.LiveContent{
 				Parts: []gemini.LivePart{
 					{Text: systemText},

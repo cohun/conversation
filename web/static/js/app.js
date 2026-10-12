@@ -41,7 +41,16 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       // Header actions & Handshake edit
-      document.getElementById('profileBtn').addEventListener('click', () => this.openModal('profileModal'));
+      const profileBtn = document.getElementById('profileBtn');
+      if (profileBtn) {
+        profileBtn.addEventListener('click', () => this.openModal('profileModal'));
+      }
+
+      const guideBtn = document.getElementById('guideBtn');
+      if (guideBtn) {
+        guideBtn.addEventListener('click', () => this.openModal('guideModal'));
+      }
+
       document.getElementById('handshakeEditBtn').addEventListener('click', () => {
         if (!this.currentUser) {
           this.openAuthModal('login');

@@ -37,7 +37,7 @@ USER appuser
 
 # Environment variables for Cloud Run
 ENV PORT=8080 \
-    DB_PATH=/tmp/app.db \
+    DB_PATH=/data/app.db \
     GEMINI_LIVE_MODEL=auto
 
 EXPOSE 8080

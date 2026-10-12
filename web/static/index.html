@@ -34,28 +34,26 @@
       </div>
       <div class="header-actions">
         <!-- Admin Dashboard button (visible for admins) -->
-        <button id="adminBtn" class="admin-badge-btn" title="Admin Vezérlőpult" aria-label="Admin Dashboard" style="display: none;">
-          <span class="admin-crown">👑</span>
-          <span class="admin-btn-text">Admin</span>
+        <button id="adminBtn" class="header-pill-btn header-admin-btn" title="Admin Vezérlőpult" aria-label="Admin Dashboard" style="display: none;">
+          <span class="pill-icon">👑</span>
+          <span class="pill-label">Admin</span>
+        </button>
+
+        <!-- Guide button -->
+        <button id="guideBtn" class="header-pill-btn header-guide-btn" title="Használati útmutató" aria-label="Útmutató">
+          <span class="pill-icon">📖</span>
+          <span class="pill-label">Útmutató</span>
         </button>
 
         <!-- Login Trigger Button (visible when unauthenticated) -->
-        <button id="loginTriggerBtn" class="login-trigger-btn" style="display: none;">
-          Belépés
+        <button id="loginTriggerBtn" class="header-pill-btn header-login-btn" style="display: none;">
+          <span class="pill-label">Belépés</span>
         </button>
 
         <!-- Authenticated Profile button -->
-        <button id="profileBtn" class="icon-btn" title="Your Profile & Quota" aria-label="Profile">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-        </button>
-        <button id="settingsBtn" class="icon-btn" title="App & Gemini Settings" aria-label="Settings" style="display: none;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
-            <circle cx="12" cy="12" r="3"></circle>
-          </svg>
+        <button id="profileBtn" class="header-pill-btn header-profile-btn" title="Profil és kvóta" aria-label="Profile">
+          <span class="pill-icon">👤</span>
+          <span class="pill-label">Profil</span>
         </button>
       </div>
     </header>
@@ -72,7 +70,7 @@
           <div id="userPhoneticHint" class="user-pronounce-hint">Pronounced: AH-leks</div>
         </div>
       </div>
-      <button id="handshakeEditBtn" class="handshake-edit-btn">Profil &amp; Kvóta</button>
+      <button id="handshakeEditBtn" class="handshake-edit-btn">⚙️ Profil &amp; Kvóta</button>
     </div>
 
     <!-- Account Status Warning / Notice Banner (if pending/blocked) -->
@@ -610,9 +608,62 @@
       </div>
     </div>
 
+    <!-- ==========================================
+         Modal 5: User Guide & Tips (Használati útmutató)
+         ========================================== -->
+    <div id="guideModal" class="modal-backdrop">
+      <div class="modal-sheet guide-sheet">
+        <div class="modal-header">
+          <div class="guide-modal-title-wrap">
+            <h3 class="modal-title">📖 Használati Útmutató</h3>
+            <span class="admin-subtitle">Tippek a kényelmes és hatékony angol beszédgyakorláshoz</span>
+          </div>
+          <button class="modal-close-btn" data-close="guideModal">&times;</button>
+        </div>
+        <div class="modal-body guide-modal-body">
+          <div class="guide-cards-grid">
+            <div class="guide-card">
+              <div class="guide-card-icon">🎙️</div>
+              <div class="guide-card-content">
+                <h4>Szóátadás – „Your turn!”</h4>
+                <p>Amikor befejezted a mondandódat, mondd: <strong>„Your turn!”</strong> vagy koppints a lenti gombra. A partner a teljes gondolatodat egyben dolgozza fel, és közvetlenül válaszol.</p>
+              </div>
+            </div>
+
+            <div class="guide-card">
+              <div class="guide-card-icon">👩‍🏫</div>
+              <div class="guide-card-content">
+                <h4>3-Fázisú Tanári Módszertan</h4>
+                <p>Sarah türelmes tanárként minden megszólalásodra három lépésben reagál: (1) jelzi az esetleges nyelvtani hibát, (2) elmagyarázza a helyes alakot, majd (3) nyitott kérdéssel viszi tovább a beszélgetést.</p>
+              </div>
+            </div>
+
+            <div class="guide-card">
+              <div class="guide-card-icon">🔊</div>
+              <div class="guide-card-content">
+                <h4>Kiejtés és Fonetika</h4>
+                <p>A <strong>Profil</strong> menüben megadhatod a neved fonetikus kiejtési segédletét (pl. <em>Attila (AH-teel-ah)</em>). Így a tanár mindig tökéletesen és természetesen szólít majd!</p>
+              </div>
+            </div>
+
+            <div class="guide-card">
+              <div class="guide-card-icon">🔖</div>
+              <div class="guide-card-content">
+                <h4>Félbeszakítás és Mentés</h4>
+                <p>Ha a partner beszél, a lenti gombbal félbeszakíthatod. A <strong>Mentés (Bookmark)</strong> gombbal pedig elmentheted a beszélgetés témáját későbbi folytatásra.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-primary" data-close="guideModal">Értem, köszönöm!</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <script src="/js/audio-call.js?v=2.4.13"></script>
-  <script src="/js/app.js?v=2.4.13"></script>
+  <script src="/js/audio-call.js?v=2.4.15"></script>
+  <script src="/js/app.js?v=2.4.15"></script>
 </body>
 </html>

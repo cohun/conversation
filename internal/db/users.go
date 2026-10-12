@@ -121,10 +121,15 @@ func (d *DB) CreateUser(
 	}
 
 	// Create user profile
+	defaultPhonetic := fmt.Sprintf("%s (pronounced %s)", displayName, displayName)
+	if strings.Contains(strings.ToLower(email), "attila") {
+		displayName = "Attila"
+		defaultPhonetic = "Attila (pronounced AH-teel-ah)"
+	}
 	_, err = d.conn.Exec(`
 		INSERT INTO user_profile (user_id, display_name, phonetic_note)
 		VALUES (?, ?, ?)
-	`, userID, displayName, fmt.Sprintf("%s (pronounced %s)", displayName, displayName))
+	`, userID, displayName, defaultPhonetic)
 	if err != nil {
 		return nil, err
 	}

@@ -193,14 +193,29 @@ body {
 }
 
 .handshake-edit-btn {
-  background: transparent;
-  border: none;
-  color: var(--sage-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  border: 1px solid var(--sage-200);
+  color: var(--sage-700);
   font-size: 0.8rem;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
-  text-decoration: underline;
-  padding: 4px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+}
+
+.handshake-edit-btn:hover {
+  background: var(--sage-100);
+  border-color: var(--sage-300);
+  transform: translateY(-1px);
 }
 
 /* Tab Navigation */
@@ -1223,46 +1238,87 @@ body {
 }
 
 /* ==========================================
-   Header Additions: Admin Badge & Login Trigger
+   Unified Header Pill Buttons (34px height)
    ========================================== */
-.admin-badge-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-pill-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: linear-gradient(135deg, #fef3c7, #fde68a);
-  border: 1px solid #f59e0b;
-  color: #92400e;
-  padding: 6px 12px;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: var(--radius-full);
-  font-size: 0.8rem;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
-  transition: all 0.2s ease;
-}
-
-.admin-badge-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3);
-}
-
-.admin-crown {
-  font-size: 0.95rem;
-}
-
-.login-trigger-btn {
-  background: var(--sage-500);
-  color: #fff;
-  border: none;
-  padding: 7px 16px;
-  border-radius: var(--radius-full);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
-.login-trigger-btn:hover {
+.header-pill-btn:hover {
+  background: var(--bg-surface-elevated);
+  border-color: var(--border-focus);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+}
+
+.header-pill-btn .pill-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.header-pill-btn .pill-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.header-admin-btn {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.header-admin-btn:hover {
+  background: linear-gradient(135deg, #fde68a, #fcd34d);
+  border-color: #d97706;
+}
+
+.header-guide-btn {
+  background: var(--bg-surface);
+  color: var(--sage-700);
+  border-color: var(--sage-200);
+}
+
+.header-guide-btn:hover {
+  background: var(--sage-50);
+  border-color: var(--sage-400);
+}
+
+.header-profile-btn {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.header-login-btn {
+  background: var(--sage-500);
+  color: #fff;
+  border-color: var(--sage-600);
+}
+
+.header-login-btn:hover {
   background: var(--sage-600);
 }
 
@@ -2032,4 +2088,93 @@ body {
   font-weight: 600;
   border-radius: var(--radius-full);
 }
+
+/* ==========================================
+   Guide Modal Styling
+   ========================================== */
+.guide-sheet {
+  max-width: 580px;
+}
+
+.guide-modal-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guide-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 600px) {
+  .guide-cards-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.guide-card {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  align-items: flex-start;
+}
+
+.guide-card-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.guide-card-content h4 {
+  margin: 0 0 4px 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.guide-card-content p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ==========================================
+   Mobile Responsive Header Pill Optimization (< 480px)
+   ========================================== */
+@media (max-width: 480px) {
+  .header-actions {
+    gap: 6px;
+  }
+
+  .header-pill-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .header-pill-btn .pill-label {
+    display: none;
+  }
+
+  .brand-title {
+    font-size: 0.95rem;
+  }
+
+  .brand-sub {
+    font-size: 0.70rem;
+  }
+
+  .user-handshake-banner {
+    margin: 12px 14px 6px 14px;
+    padding: 10px 14px;
+  }
+}
+
 
