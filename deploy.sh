@@ -14,7 +14,7 @@ TIMEOUT="3600" # Support up to 60-minute long-lived WebSocket voice sessions
 
 echo "Deploying service '$SERVICE_NAME' to region '$REGION'..."
 
-ENV_VARS="GEMINI_LIVE_MODEL=auto,DB_PATH=/tmp/app.db,ADMIN_EMAILS=attila.private@gmail.com,attila.hitb@gmail.com,SESSION_SECRET=antigravity-english-teacher-session-secret-attila-2026,APP_URL=https://english-teacher-app-916343130758.europe-west1.run.app"
+ENV_VARS="GEMINI_LIVE_MODEL=auto,DB_PATH=/tmp/app.db,ADMIN_EMAILS=attila.private@gmail.com;attila.hitb@gmail.com,SESSION_SECRET=antigravity-english-teacher-session-secret-attila-2026,APP_URL=https://english-teacher-app-916343130758.europe-west1.run.app"
 
 # If GEMINI_API_KEY is explicitly set in shell, update it; otherwise preserve existing Cloud Run secret
 if [ -n "$GEMINI_API_KEY" ]; then

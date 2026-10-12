@@ -105,7 +105,9 @@ func LoadConfig() *Config {
 		adminEnv = os.Getenv("ADMIN_EMAIL")
 	}
 	if adminEnv != "" {
-		parts := strings.Split(adminEnv, ",")
+		parts := strings.FieldsFunc(adminEnv, func(r rune) bool {
+			return r == ',' || r == ';' || r == ':' || r == ' '
+		})
 		for _, p := range parts {
 			trimmed := strings.ToLower(strings.TrimSpace(p))
 			if trimmed != "" && !adminMap[trimmed] {
