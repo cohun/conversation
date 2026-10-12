@@ -72,7 +72,10 @@
           <div id="userPhoneticHint" class="user-pronounce-hint">Pronounced: AH-leks</div>
         </div>
       </div>
-      <button id="handshakeEditBtn" class="handshake-edit-btn">Profil &amp; Kvóta</button>
+      <div class="user-banner-actions">
+        <button id="guideTabBtn" class="handshake-guide-btn" title="Hogyan használd a programot?">📖 Útmutató</button>
+        <button id="handshakeEditBtn" class="handshake-edit-btn">Profil &amp; Kvóta</button>
+      </div>
     </div>
 
     <!-- Account Status Warning / Notice Banner (if pending/blocked) -->
@@ -157,6 +160,9 @@
           <span>📚 Saved Topics</span>
           <span id="topicsCountBadge" class="tab-badge">0</span>
         </button>
+        <button class="tab-btn" data-tab="guide">
+          <span>📖 Útmutató</span>
+        </button>
       </nav>
 
       <!-- Tab 1: Personas -->
@@ -182,12 +188,132 @@
           <!-- Rendered dynamically via app.js -->
         </div>
       </section>
+
+      <!-- Tab 3: User Guide & Help (Amatőröknek is érthető) -->
+      <section id="tabGuide" class="tab-pane">
+        <div class="section-top-row">
+          <h2 class="section-heading">Használati Útmutató</h2>
+        </div>
+
+        <div class="guide-cards-grid">
+          <!-- Card 1: Mi ez a program? -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🌟</span>
+              <h3>Mi ez a program?</h3>
+            </div>
+            <p>
+              Ez az alkalmazás a személyes, türelmes angol beszélgetőpartnered. Olyan, mintha telefonon felhívnál egy anyanyelvi angoltanárt vagy egy külföldi barátodat, akivel bármilyen témáról kötetlenül beszélgethetsz.
+            </p>
+            <p>
+              Nem vizsgáztat, nem siettet: az a célja, hogy félelem nélkül, magabiztosan szólalj meg angolul, és fejlődjön a szókincsed és beszédértésed.
+            </p>
+          </div>
+
+          <!-- Card 2: A 3 Partner -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">👩‍🏫</span>
+              <h3>A 3 különböző beszélgetőtárs (Companion)</h3>
+            </div>
+            <p>A főoldalon 3 partner közül választhatsz a pillanatnyi célod szerint:</p>
+            <ul>
+              <li><strong>Sarah (Türelmes Angoltanár):</strong> Ha hibásan mondasz valamit, kedvesen megismétli a helyes mondatot, röviden elmagyarázza a nyelvtant, majd kérdez tőled valamit a témában.</li>
+              <li><strong>Fred (Kötetlen Barát):</strong> Spontán, laza csevegés utazásról, hobbikról, zenéről, a hétvégi tervekről vagy épp a vacsoráról.</li>
+              <li><strong>Maya (Üzleti Coach):</strong> Tárgyalások, munkahelyi prezentációk, állásinterjúk és professzionális angol kifejezések gyakorlása.</li>
+            </ul>
+          </div>
+
+          <!-- Card 3: Szó átadása (Kiemelt kártya!) -->
+          <div class="guide-card highlight-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🗣️</span>
+              <h3>A szó átadása – Nyugodtan gondolkodhatsz!</h3>
+            </div>
+            <p>
+              <strong>A tanár soha nem vág közbe!</strong> Tudjuk, hogy tanulás közben hosszabb szünetekre van szükséged, hogy felidézd a megfelelő kifejezést vagy összeállítsd a mondatot.
+            </p>
+            <p>
+              A rendszer nem kapkod: <strong>csak akkor válaszol, ha te kifejezetten átadod neki a szót!</strong> Ezt kétféleképpen teheted meg:
+            </p>
+            <ul>
+              <li><strong>Hanggal (Érintés nélkül):</strong> Amikor befejezted a mondandódat, egyszerűen mondd ki: <strong>„Your turn!”</strong> <em>(vagy „Over to you!”)</em>. A rendszer azonnal észleli és átadja a szót.</li>
+              <li><strong>Érintéssel / Gombbal:</strong> Koppints a képernyő közepén lévő nagy pulzáló körre, vagy nyomd meg az alsó zöld <strong>„Átadom a szót”</strong> gombot!</li>
+            </ul>
+          </div>
+
+          <!-- Card 4: Harang / Gong jelzés -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🔔</span>
+              <h3>Mit jelent a halk harang / gong jelzés?</h3>
+            </div>
+            <p>
+              Miután átadtad a szót („Your turn!” kimondása vagy a gomb megnyomása), azonnal megszólal egy kellemes, halk haranghang.
+            </p>
+            <p>
+              Ha a válasz előkészítése pár másodpercet vesz igénybe, <strong>a harang 5 másodpercenként finoman megismétlődik</strong> egészen addig, amíg a partner meg nem szólal.
+            </p>
+            <p>
+              <strong>Ez teljesen normális!</strong> Ez a megnyugtató jelzés arról tájékoztat, hogy nincs hiba, a beszéded eljutott a rendszerhez, és az AI éppen a választ fogalmazza meg.
+            </p>
+          </div>
+
+          <!-- Card 5: Autós használat -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🚗</span>
+              <h3>Kényelmes használat autóban (Hands-free)</h3>
+            </div>
+            <p>
+              A program ideális útitárs vezetés közben, mert nem igényli a képernyő nézését:
+            </p>
+            <ul>
+              <li><strong>Optimalizált autóhang:</strong> A hangerőt és dinamikát külön az autóhangszórók akusztikájához hangoltuk, így Bluetooth-on keresztül sem torzít és nem recseg.</li>
+              <li><strong>Vezetés közben:</strong> Tedd a telefont a tartóba. Beszélj nyugodtan, a végén mondd ki: <strong>„Your turn!”</strong>, és a periodikus harangjelzésből a képernyőre pillantás nélkül is pontosan fogod tudni, hogy a partnered már dolgozik a válaszon.</li>
+              <li><strong>Egykoppintásos vezérlés:</strong> Ha a háttérzaj miatt a hangutasítás helyett érintéssel adnád át a szót, elég a telefon képernyőjére bárhova koppintanod a nagy középső kör területén.</li>
+            </ul>
+          </div>
+
+          <!-- Card 6: Témák mentése és folytatása -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🔖</span>
+              <h3>Témák elmentése és folytatása később</h3>
+            </div>
+            <p>
+              Ha megérkeztél a célodhoz vagy félbe kell szakítanod a hívást, a beszélgetésed nem vész el!
+            </p>
+            <ul>
+              <li>A hívás közben nyomd meg a <strong>„Téma mentése”</strong> gombot, vagy mondd be: <em>„Please save this topic!”</em></li>
+              <li>A főoldalon a <strong>Saved Topics</strong> fül alatt látni fogod a korábbi beszélgetések címeit és dátumát.</li>
+              <li>Bármikor rákattinthatsz a <strong>„Resume Call”</strong> gombra, és a tanár azonnal emlékezni fog arra, amiről legutóbb beszéltetek, és onnan folytatjátok!</li>
+            </ul>
+          </div>
+
+          <!-- Card 7: Napi keret & Saját Google kulcs (BYOK) -->
+          <div class="guide-card">
+            <div class="guide-card-header">
+              <span class="guide-card-icon">🔑</span>
+              <h3>Napi beszédidő &amp; Korlátlan Saját Kulcs (BYOK)</h3>
+            </div>
+            <p>
+              Minden regisztrált tanuló naponta <strong>45 perc ingyenes központi beszédkeretet</strong> kap, ami minden éjfélkor automatikusan újraindul.
+            </p>
+            <p>
+              Ha ennél többet szeretnél gyakorolni, a jobb felső <strong>Profil</strong> menüben megadhatod a saját ingyenes Google AI Studio kulcsodat (BYOK). Ezzel a saját kulcsoddal teljesen <strong>korlátlanul, időkorlát nélkül</strong> beszélgethetsz!
+            </p>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- ==========================================
          Active Fullscreen Phone Call Interface
          ========================================== -->
     <div id="callOverlay" class="call-overlay" data-call-state="connecting">
+      <!-- Quick In-Call Help Button -->
+      <button id="callGuideBtn" class="call-top-guide-btn" title="Gyors használati útmutató">❓</button>
       <!-- Call Top Caller Info -->
       <div class="call-top-info">
         <div id="callerAvatar" class="caller-avatar-ring">👩‍🏫</div>
@@ -610,9 +736,53 @@
       </div>
     </div>
 
+    <!-- ==========================================
+         Modal: In-Call Quick Help / Guide
+         ========================================== -->
+    <div id="callGuideModal" class="modal-backdrop">
+      <div class="modal-sheet" style="max-width: 540px;">
+        <div class="modal-header">
+          <h3 class="modal-title">📖 Gyors Útmutató a Híváshoz</h3>
+          <button class="modal-close-btn" data-close="callGuideModal">&times;</button>
+        </div>
+        <div class="modal-body" style="font-size: 0.92rem; line-height: 1.6; color: var(--text-secondary);">
+          <div style="background: var(--sage-50); border: 1px solid var(--sage-300); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 14px;">
+            <strong style="color: var(--sage-800);">🗣️ A szó átadása:</strong>
+            <p style="margin: 4px 0 0 0; color: var(--text-secondary);">
+              A tanár nem vág közbe, nyugodtan gondolkodhatsz! Amikor befejezted a mondatodat, mondd ki: <strong>„Your turn!”</strong>, vagy koppints a középső nagy körre / alsó gombra.
+            </p>
+          </div>
+
+          <div style="margin-bottom: 14px;">
+            <strong style="color: var(--text-primary);">🔔 Mit jelent az 5 másodpercenkénti harang?</strong>
+            <p style="margin: 4px 0 0 0;">
+              Jelzi, hogy a rendszer hallotta amit mondtál, és éppen dolgozik a válaszon. Amint a válasz elkészül, a harang elhallgat és a partner azonnal megszólal.
+            </p>
+          </div>
+
+          <div style="margin-bottom: 14px;">
+            <strong style="color: var(--text-primary);">🚗 Autós vezetés közben:</strong>
+            <p style="margin: 4px 0 0 0;">
+              Nem kell a képernyőt nézned: a mondandód végén csak mondd ki: <strong>„Your turn!”</strong>, vagy koppints egyet a telefon kijelzőjére.
+            </p>
+          </div>
+
+          <div>
+            <strong style="color: var(--text-primary);">🔖 Téma mentése:</strong>
+            <p style="margin: 4px 0 0 0;">
+              Nyomd meg a <strong>Téma mentése</strong> gombot, vagy mondd: <em>„Please save this topic!”</em> Később a főoldalon folytathatod.
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-primary" data-close="callGuideModal">Értem, vissza a híváshoz</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <script src="/js/audio-call.js?v=2.4.13"></script>
-  <script src="/js/app.js?v=2.4.13"></script>
+  <script src="/js/audio-call.js?v=2.4.14"></script>
+  <script src="/js/app.js?v=2.4.14"></script>
 </body>
 </html>

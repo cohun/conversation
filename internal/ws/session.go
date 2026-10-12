@@ -505,31 +505,43 @@ func (s *RollingLiveSession) Run() {
 			s.lastTurnTime = turnStartTime
 			s.activityMu.Unlock()
 
-			var passMsg gemini.LiveClientMessage
 			if len(audioBytesToSend) > 0 {
-				log.Printf("[RollingSession] 🎯 pass_turn received (%d audio chunks, %d bytes): Submitting complete audio turn to Gemini...", chunksCount, len(audioBytesToSend))
-				b64Audio := base64.StdEncoding.EncodeToString(audioBytesToSend)
-				passMsg = gemini.LiveClientMessage{
-					ClientContent: &gemini.LiveClientContent{
-						Turns: []gemini.LiveContent{
-							{
-								Role: "user",
-								Parts: []gemini.LivePart{
-									{
-										InlineData: &gemini.LiveBlob{
-											MimeType: "audio/pcm;rate=16000",
-											Data:     b64Audio,
-										},
-									},
+				log.Printf("[RollingSession] 🎯 pass_turn received (%d audio chunks, %d bytes): streaming RealtimeInput to Gemini...", chunksCount, len(audioBytesToSend))
+				// Slice audio into 100ms chunks (3200 bytes at 16kHz 16-bit mono) and stream via RealtimeInput
+				const chunkSize = 3200
+				for i := 0; i < len(audioBytesToSend); i += chunkSize {
+					end := i + chunkSize
+					if end > len(audioBytesToSend) {
+						end = len(audioBytesToSend)
+					}
+					chunk := audioBytesToSend[i:end]
+					b64 := base64.StdEncoding.EncodeToString(chunk)
+					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+						RealtimeInput: &gemini.LiveRealtimeInput{
+							MediaChunks: []gemini.LiveBlob{
+								{
+									MimeType: "audio/pcm;rate=16000",
+									Data:     b64,
 								},
 							},
 						},
+					})
+				}
+				// Signal turn completion to Gemini Live
+				passMsg := gemini.LiveClientMessage{
+					ClientContent: &gemini.LiveClientContent{
 						TurnComplete: true,
 					},
 				}
+				if err := s.sendToActiveGemini(passMsg); err != nil {
+					log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
+					if rErr := s.doRollover(ctx); rErr == nil {
+						_ = s.sendToActiveGemini(passMsg)
+					}
+				}
 			} else {
 				log.Printf("[RollingSession] ℹ️ Zero audio chunks on pass_turn. Sending gentle prompt to Gemini...")
-				passMsg = gemini.LiveClientMessage{
+				passMsg := gemini.LiveClientMessage{
 					ClientContent: &gemini.LiveClientContent{
 						Turns: []gemini.LiveContent{
 							{
@@ -542,40 +554,37 @@ func (s *RollingLiveSession) Run() {
 						TurnComplete: true,
 					},
 				}
-			}
-			if err := s.sendToActiveGemini(passMsg); err != nil {
-				log.Printf("[RollingSession] Error writing pass_turn to Gemini: %v. Attempting immediate reconnect...", err)
-				if rErr := s.doRollover(ctx); rErr == nil {
-					_ = s.sendToActiveGemini(passMsg)
+				if err := s.sendToActiveGemini(passMsg); err != nil {
+					log.Printf("[RollingSession] Error writing prompt to Gemini: %v", err)
 				}
-			} else {
-				// Turn watchdog: If Gemini does not respond after 12s, refresh connection cleanly
-				go func(sentTime time.Time) {
-					time.Sleep(12 * time.Second)
-					s.activityMu.Lock()
-					stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
-					s.activityMu.Unlock()
+			}
 
-					if stalled {
-						log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s). Refreshing connection...")
-						if rErr := s.doRollover(ctx); rErr == nil {
-							_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-								ClientContent: &gemini.LiveClientContent{
-									Turns: []gemini.LiveContent{
-										{
-											Role: "user",
-											Parts: []gemini.LivePart{
-												{Text: "[Connection refreshed. Please ask an open question to invite the student to speak.]"},
-											},
+			// Turn watchdog: If Gemini does not respond after 30s, refresh connection cleanly
+			go func(sentTime time.Time) {
+				time.Sleep(30 * time.Second)
+				s.activityMu.Lock()
+				stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
+				s.activityMu.Unlock()
+
+				if stalled {
+					log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 30s). Refreshing connection...")
+					if rErr := s.doRollover(ctx); rErr == nil {
+						_ = s.sendToActiveGemini(gemini.LiveClientMessage{
+							ClientContent: &gemini.LiveClientContent{
+								Turns: []gemini.LiveContent{
+									{
+										Role: "user",
+										Parts: []gemini.LivePart{
+											{Text: "[Connection refreshed. Please ask an open question to invite the student to speak.]"},
 										},
 									},
-									TurnComplete: true,
 								},
-							})
-						}
+								TurnComplete: true,
+							},
+						})
 					}
-				}(turnStartTime)
-			}
+				}
+			}(turnStartTime)
 
 		case "bookmark":
 			bookmarkMsg := gemini.LiveClientMessage{

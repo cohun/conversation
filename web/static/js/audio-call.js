@@ -889,24 +889,28 @@ class AudioCallManager {
     // Play immediate feedback chime and start 5-second waiting heartbeat
     this.startWaitingChimeHeartbeat();
 
+    // Enter thinking state immediately
+    this.setState('thinking');
+
+    if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
+    this.thinkingTimer = setTimeout(() => {
+      if (this.state === 'thinking') {
+        console.warn('[AudioCall] Response timeout (35s) - switching back to listening');
+        this.stopWaitingChimeHeartbeat();
+        this.setState('listening');
+      }
+    }, 35000);
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       console.log(`[AudioCall] 🎯 passTurn: passing turn to partner (chunks streamed in turn: ${this.sentAudioChunkCount})`);
       this.sentAudioChunkCount = 0;
-
-      this.setState('thinking');
-      if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
-      this.thinkingTimer = setTimeout(() => {
-        if (this.state === 'thinking') {
-          console.warn('[AudioCall] Response timeout - switching back to listening');
-          this.stopWaitingChimeHeartbeat();
-          this.setState('listening');
-        }
-      }, 15000);
 
       this.ws.send(JSON.stringify({
         type: 'pass_turn',
         text: '',
       }));
+    } else {
+      console.warn('[AudioCall] WebSocket not open on passTurn');
     }
   }
 
