@@ -46,9 +46,10 @@ class AudioCallManager {
     this.startTime = null;
     this.timerInterval = null;
 
-    // Voice Trigger ("Your turn!") & Waiting Chime Heartbeat
-    this.recognition = null;
-    this.isRecognitionActive = false;
+    // Natural VAD Turn-Taking & Waiting Chime Heartbeat
+    this.consecutiveSpeechChunks = 0;
+    this.consecutiveSilenceChunks = 0;
+    this.userHasSpokenInTurn = false;
     this.waitingChimeInterval = null;
 
     // Cache synthesized voices
@@ -200,9 +201,6 @@ class AudioCallManager {
       this.compressor.connect(this.outputGain);
       this.outputGain.connect(this.audioCtx.destination);
 
-      // Initialize Voice Recognition for hands-free "Your turn!" triggering
-      this.initVoiceRecognition();
-
       // 4. Request initial microphone permission within the user gesture
       const permStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -213,17 +211,9 @@ class AudioCallManager {
         },
       });
 
-      if (isMobile) {
-        // Mobile: Immediate Hardware Teardown! Sarah speaks first!
-        // Releasing microphone tracks immediately returns phone to pure media stereo loudspeaker mode!
-        permStream.getTracks().forEach((track) => track.stop());
-        this.micStream = null;
-        console.log('[AudioCall] 🔊 Mobile initial Hardware Teardown: mic released for Sarah greeting');
-      } else {
-        // Desktop: Maintain persistent mic stream as verified and working
-        this.micStream = permStream;
-        await this.initMicrophoneCapture();
-      }
+      // Maintain persistent mic stream across all devices (no mid-call hardware teardown)
+      this.micStream = permStream;
+      await this.initMicrophoneCapture();
 
       // 5. Connect WebSocket to server proxy
       this.connectWebSocket();
@@ -376,6 +366,27 @@ class AudioCallManager {
       // Visual feedback callback for orb pulsation
       if (this.onAudioActivity) {
         this.onAudioActivity(rms);
+      }
+
+      // Natural Conversational Pause Turn Handover (Auto-VAD)
+      if (rms > 0.018) {
+        this.consecutiveSpeechChunks++;
+        this.consecutiveSilenceChunks = 0;
+        if (this.consecutiveSpeechChunks >= 4) { // User has spoken for at least 400ms
+          this.userHasSpokenInTurn = true;
+        }
+      } else if (rms < 0.009) {
+        this.consecutiveSpeechChunks = 0;
+        this.consecutiveSilenceChunks++;
+
+        // If the student has spoken their sentence/question, and then naturally pauses for 2.2s (22 chunks):
+        // Automatically hand over the turn smoothly!
+        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 22) {
+          console.log('[AudioCall] 🎙️ Natural conversational pause detected (2.2s silence after speech) -> Auto-passing turn to partner!');
+          this.userHasSpokenInTurn = false;
+          this.consecutiveSilenceChunks = 0;
+          this.passTurn();
+        }
       }
     }
   }
@@ -688,11 +699,10 @@ class AudioCallManager {
     this.state = newState;
 
     if (newState === 'listening') {
-      // Start listening for hands-free "Your turn!" trigger
-      this.startVoiceRecognition();
+      this.userHasSpokenInTurn = false;
+      this.consecutiveSpeechChunks = 0;
+      this.consecutiveSilenceChunks = 0;
     } else {
-      // Not listening: stop speech recognition
-      this.stopVoiceRecognition();
       if (newState !== 'thinking') {
         this.stopWaitingChimeHeartbeat();
       }
@@ -766,95 +776,15 @@ class AudioCallManager {
     }
   }
 
-  // Hands-Free Voice Trigger Recognition ("Your turn!", "Over to you", etc.)
+  // Hands-Free Natural Voice Detection (Auto-VAD via PCM RMS)
   initVoiceRecognition() {
-    const SpeechRecClass = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecClass) {
-      console.log('[AudioCall] SpeechRecognition API not available in this browser.');
-      return;
-    }
-
-    try {
-      this.recognition = new SpeechRecClass();
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
-      this.recognition.maxAlternatives = 3;
-
-      this.recognition.onresult = (event) => {
-        if (this.state !== 'listening' || this.isAiSpeaking) return;
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const res = event.results[i];
-          for (let j = 0; j < res.length; j++) {
-            const transcript = (res[j].transcript || '').toLowerCase().trim();
-            if (this.matchesVoiceTrigger(transcript)) {
-              console.log(`[AudioCall] 🎯 Voice trigger detected: "${transcript}"! Passing turn to partner.`);
-              this.passTurn();
-              return;
-            }
-          }
-        }
-      };
-
-      this.recognition.onerror = (event) => {
-        if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          console.warn('[AudioCall] SpeechRecognition notice:', event.error);
-        }
-      };
-
-      this.recognition.onend = () => {
-        this.isRecognitionActive = false;
-        if (this.state === 'listening' && !this.isAiSpeaking) {
-          setTimeout(() => {
-            if (this.state === 'listening' && !this.isAiSpeaking) {
-              this.startVoiceRecognition();
-            }
-          }, 300);
-        }
-      };
-      console.log('[AudioCall] 🎙️ SpeechRecognition voice trigger initialized ("Your turn!")');
-    } catch (e) {
-      console.warn('[AudioCall] Could not initialize SpeechRecognition:', e);
-      this.recognition = null;
-    }
+    // Note: webkitSpeechRecognition is intentionally not initialized here.
+    // Chromium's Web Speech API forces exclusive CoreAudio/WASAPI capture which
+    // mutes MediaStream / AudioWorklet to RMS 0.000. Realtime 16kHz audio is preserved!
   }
 
-  matchesVoiceTrigger(text) {
-    if (!text) return false;
-    const clean = text.replace(/[^a-z0-9\s]/gi, ' ').toLowerCase();
-    const triggers = [
-      /\byour\s+turn\b/,
-      /\byou\s*re\s+turn\b/,
-      /\bur\s+turn\b/,
-      /\byou\s+turn\b/,
-      /\byour\s+tern\b/,
-      /\byur\s+turn\b/,
-      /\bover\s+to\s+you\b/,
-      /\bwhat\s+do\s+you\s+think\b/,
-      /\bgo\s+ahead\b/
-    ];
-    return triggers.some((re) => re.test(clean));
-  }
-
-  startVoiceRecognition() {
-    if (!this.recognition || this.isRecognitionActive) return;
-    try {
-      this.recognition.start();
-      this.isRecognitionActive = true;
-      console.log('[AudioCall] 🎙️ Voice recognition active: listening for "Your turn!"...');
-    } catch (e) {
-      this.isRecognitionActive = false;
-    }
-  }
-
-  stopVoiceRecognition() {
-    if (!this.recognition) return;
-    this.isRecognitionActive = false;
-    try {
-      this.recognition.abort();
-    } catch (e) {}
-  }
+  startVoiceRecognition() {}
+  stopVoiceRecognition() {}
 
   passTurn() {
     // Check if AI is genuinely speaking with active audio nodes in queue
@@ -866,7 +796,9 @@ class AudioCallManager {
 
     this.turnCompleteReceived = false;
     this.setAiSpeaking(false);
-    this.stopVoiceRecognition();
+    this.userHasSpokenInTurn = false;
+    this.consecutiveSpeechChunks = 0;
+    this.consecutiveSilenceChunks = 0;
 
     // Play immediate feedback chime and start 5-second waiting heartbeat
     this.startWaitingChimeHeartbeat();
