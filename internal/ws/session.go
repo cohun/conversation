@@ -232,21 +232,6 @@ func (s *RollingLiveSession) handleClientInterrupt() {
 
 	// 1. Tell browser audio has stopped immediately
 	_ = s.clientWS.WriteJSON(ClientOutMessage{Type: "interrupted"})
-
-	// 2. Send barge-in activity signals to Gemini Live to stop ongoing generation
-	interruptMsg := gemini.LiveClientMessage{
-		RealtimeInput: &gemini.LiveRealtimeInput{
-			ActivityStart: &gemini.LiveActivityStart{},
-		},
-	}
-	_ = s.sendToActiveGemini(interruptMsg)
-
-	endMsg := gemini.LiveClientMessage{
-		RealtimeInput: &gemini.LiveRealtimeInput{
-			ActivityEnd: &gemini.LiveActivityEnd{},
-		},
-	}
-	_ = s.sendToActiveGemini(endMsg)
 }
 
 func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWebSocket) {
@@ -493,24 +478,12 @@ func (s *RollingLiveSession) Run() {
 			if clientMsg.Data != "" {
 				s.activityMu.Lock()
 				canStream := !s.isAiSpeaking && !s.isProcessingTurn
-				started := s.hasStartedTurnActivity
 				if canStream {
-					if !started {
-						s.hasStartedTurnActivity = true
-					}
 					s.userAudioChunksInTurn++
 				}
 				s.activityMu.Unlock()
 
 				if canStream {
-					if !started {
-						log.Printf("[RollingSession] 🎤 Student speech started: sending ActivityStart to Gemini...")
-						_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-							RealtimeInput: &gemini.LiveRealtimeInput{
-								ActivityStart: &gemini.LiveActivityStart{},
-							},
-						})
-					}
 					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
 						RealtimeInput: &gemini.LiveRealtimeInput{
 							MediaChunks: []gemini.LiveBlob{
@@ -608,22 +581,21 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 	s.isProcessingTurn = true
 	s.droppingAudio = false
 	chunksCount := s.userAudioChunksInTurn
-	started := s.hasStartedTurnActivity
 	s.hasStartedTurnActivity = false
 	s.userAudioChunksInTurn = 0
 	turnStartTime := time.Now()
 	s.lastTurnTime = turnStartTime
 	s.activityMu.Unlock()
 
-	if started && chunksCount > 0 {
-		log.Printf("[RollingSession] 🎯 %s -> Sending ActivityEnd to Gemini (%d audio chunks streamed)...", source, chunksCount)
+	if chunksCount > 0 {
+		log.Printf("[RollingSession] 🎯 %s -> Sending TurnComplete to Gemini (%d audio chunks streamed)...", source, chunksCount)
 		endMsg := gemini.LiveClientMessage{
-			RealtimeInput: &gemini.LiveRealtimeInput{
-				ActivityEnd: &gemini.LiveActivityEnd{},
+			ClientContent: &gemini.LiveClientContent{
+				TurnComplete: true,
 			},
 		}
 		if err := s.sendToActiveGemini(endMsg); err != nil {
-			log.Printf("[RollingSession] Error sending ActivityEnd to Gemini: %v. Attempting immediate reconnect...", err)
+			log.Printf("[RollingSession] Error sending TurnComplete to Gemini: %v. Attempting immediate reconnect...", err)
 			if rErr := s.doRollover(ctx); rErr == nil {
 				_ = s.sendToActiveGemini(endMsg)
 			}
