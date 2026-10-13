@@ -1031,6 +1031,26 @@ body {
   color: #fff;
 }
 
+.call-control-btn.thinking-mode .call-control-circle {
+  background: var(--sand-100);
+  border-color: var(--sand-400);
+  color: var(--sage-600);
+  width: 60px;
+  height: 60px;
+  font-size: 1.3rem;
+  opacity: 0.9;
+  cursor: wait;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin-icon {
+  animation: spin 1.2s linear infinite;
+}
+
 @keyframes interruptPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(209, 107, 71, 0.45); }
   50% { box-shadow: 0 0 0 10px rgba(209, 107, 71, 0); }

@@ -287,6 +287,10 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 
 			if transcriptText != "" {
 				log.Printf("[RollingSession] 🗣️ User speech recognized: %q", transcriptText)
+				_ = s.clientWS.WriteJSON(ClientOutMessage{
+					Type: "user_transcript",
+					Text: transcriptText,
+				})
 				if s.matchesVoiceTrigger(transcriptText) {
 					log.Printf("[RollingSession] 🎯 Voice trigger detected in transcript (%q)! Committing turn immediately...", transcriptText)
 					s.endUserTurn(ctx, fmt.Sprintf("voice trigger (%q)", transcriptText))

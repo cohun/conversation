@@ -356,11 +356,15 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 			},
 			RealtimeInputConfig: &gemini.LiveRealtimeInputConfig{
 				AutomaticActivityDetection: &gemini.LiveAutomaticActivityDetection{
-					Disabled: true, // Google VAD disabled: Gemini never cuts in when the student pauses or hesitates!
+					Disabled:                 false,
+					PrefixPaddingMs:          500,
+					SilenceDurationMs:        5000,
+					EndOfSpeechSensitivity:   "END_SENSITIVITY_LOW",
+					StartOfSpeechSensitivity: "START_SENSITIVITY_LOW",
 				},
 			},
 			InputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{
-				LanguageCodes: []string{"en"},
+				LanguageCodes: []string{"en-US"},
 			},
 			OutputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{},
 			SystemInstruction: &gemini.LiveContent{

@@ -1343,10 +1343,16 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           if (orb && this.currentCall && this.currentCall.state === 'listening') {
             if (rms > 0.015) {
               orb.style.boxShadow = '0 0 28px rgba(78, 124, 99, 0.7)';
-              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Befejezéskor tarts kis szünetet, vagy koppints az átadáshoz.';
+              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Befejezéskor mondd: "Your turn!", vagy koppints.';
             } else {
               orb.style.boxShadow = '';
             }
+          }
+        },
+        onUserTranscript: (text) => {
+          const tip = document.getElementById('callBargeInTip');
+          if (tip && this.currentCall && this.currentCall.state === 'listening') {
+            tip.textContent = `🗣️ "${text}"`;
           }
         },
         onTopicSaved: (topic) => {
@@ -1380,33 +1386,44 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           statusText.textContent = 'Connecting...';
           stateLabel.textContent = 'Establishing voice connection...';
           bargeInTip.textContent = 'Connecting to voice session...';
-          this.setPassTurnButtonMode('pass');
+          if (this.interruptModeTimeout) clearTimeout(this.interruptModeTimeout);
+          this.setPassTurnButtonMode('thinking');
           break;
 
         case 'listening':
           statusText.textContent = 'Connected';
           stateLabel.textContent = 'Listening to you... (Beszélj bátran!)';
-          bargeInTip.textContent = 'Beszélj bátran! Befejezéskor tarts 2 mp szünetet, vagy koppints az átadáshoz.';
+          bargeInTip.textContent = 'Mondd: "Your turn!", vagy koppints az átadáshoz.';
+          if (this.interruptModeTimeout) clearTimeout(this.interruptModeTimeout);
           this.setPassTurnButtonMode('pass');
           break;
 
         case 'speaking':
           statusText.textContent = 'Connected';
           stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} is speaking...`;
-          bargeInTip.textContent = 'Tap "Félbeszakítás" (or the orb) to interrupt!';
-          this.setPassTurnButtonMode('interrupt');
+          bargeInTip.textContent = 'Sarah beszél... Koppints a félbeszakításhoz.';
+          // Delay showing 'interrupt' button until 1.5s grace period passes
+          if (this.interruptModeTimeout) clearTimeout(this.interruptModeTimeout);
+          this.setPassTurnButtonMode('thinking');
+          this.interruptModeTimeout = setTimeout(() => {
+            if (this.currentCall && (this.currentCall.state === 'speaking' || this.currentCall.isAiSpeaking)) {
+              this.setPassTurnButtonMode('interrupt');
+            }
+          }, 1500);
           break;
 
         case 'thinking':
           statusText.textContent = 'Connected';
           stateLabel.textContent = `${this.activePersona ? this.activePersona.name : 'Partner'} gondolkodik...`;
           bargeInTip.textContent = 'Válasz előkészítése... 🔔';
-          this.setPassTurnButtonMode('pass');
+          if (this.interruptModeTimeout) clearTimeout(this.interruptModeTimeout);
+          this.setPassTurnButtonMode('thinking');
           break;
 
         case 'ended':
           statusText.textContent = 'Call ended';
           stateLabel.textContent = 'Call completed';
+          if (this.interruptModeTimeout) clearTimeout(this.interruptModeTimeout);
           this.setPassTurnButtonMode('pass');
           break;
       }
@@ -1418,16 +1435,23 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
       const icon = document.getElementById('passTurnIcon');
       if (!btn) return;
 
+      btn.classList.remove('primary-pass', 'interrupt-mode', 'thinking-mode');
+
       if (mode === 'interrupt') {
-        btn.classList.remove('primary-pass');
         btn.classList.add('interrupt-mode');
         btn.title = 'Félbeszakítás / Interrupt';
         if (label) label.textContent = 'Félbeszakítás';
         if (icon) {
           icon.innerHTML = `<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"></rect>`;
         }
+      } else if (mode === 'thinking') {
+        btn.classList.add('thinking-mode');
+        btn.title = 'Sarah válaszol... ⏳';
+        if (label) label.textContent = 'Gondolkodik...';
+        if (icon) {
+          icon.innerHTML = `<svg class="spin-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
+        }
       } else {
-        btn.classList.remove('interrupt-mode');
         btn.classList.add('primary-pass');
         btn.title = 'Átadom a szót / Your Turn';
         if (label) label.textContent = 'Átadom a szót';
@@ -1476,7 +1500,16 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
 
     passCallTurn() {
       if (!this.currentCall) return;
-      this.currentCall.passTurn();
+      const callState = this.currentCall.state;
+      const isSpeaking = this.currentCall.isAiSpeaking || callState === 'speaking';
+
+      if (isSpeaking) {
+        this.currentCall.manualInterrupt();
+      } else if (callState === 'listening') {
+        this.currentCall.passTurn();
+      } else {
+        console.log('[App] Pass/Interrupt click ignored during state:', callState);
+      }
     },
 
     bookmarkCallTopic() {

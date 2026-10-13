@@ -379,10 +379,10 @@ class AudioCallManager {
         this.consecutiveSpeechChunks = 0;
         this.consecutiveSilenceChunks++;
 
-        // Extended silence patience: 8.0 seconds (80 chunks of 100ms silence after speech).
+        // Extended silence patience: 5.0 seconds (50 chunks of 100ms silence after speech).
         // This guarantees Sarah NEVER cuts in while the student is thinking, hesitating, or formulating a sentence!
-        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 80) {
-          console.log('[AudioCall] 🎙️ Extended conversational silence detected (8.0s silence after speech) -> Gracefully passing turn to partner!');
+        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 50) {
+          console.log('[AudioCall] 🎙️ Conversational silence detected (5.0s silence after speech) -> Gracefully passing turn to partner!');
           this.userHasSpokenInTurn = false;
           this.consecutiveSilenceChunks = 0;
           this.passTurn();
@@ -477,6 +477,15 @@ class AudioCallManager {
             this.setState('listening');
           }
         }, 15000);
+        break;
+
+      case 'user_transcript':
+        if (msg.text) {
+          console.log('[AudioCall] 🗣️ User speech recognized by server:', msg.text);
+          if (this.onUserTranscript) {
+            this.onUserTranscript(msg.text);
+          }
+        }
         break;
 
       case 'topic_saved':
@@ -708,6 +717,7 @@ class AudioCallManager {
 
     this.isAiSpeaking = speaking;
     if (speaking) {
+      this.aiSpeechStartTime = Date.now();
       this.stopWaitingChimeHeartbeat();
       this.setState('speaking');
     }
@@ -805,15 +815,14 @@ class AudioCallManager {
   stopVoiceRecognition() {}
 
   passTurn() {
-    // Check if AI is genuinely speaking with active audio nodes in queue
-    const isActuallyPlaying = this.isAiSpeaking && this.activeSourceNodes.length > 0;
-    if (isActuallyPlaying) {
-      this.manualInterrupt();
+    // Strict Guard: ONLY pass turn when in 'listening' state and AI is not speaking
+    // Absolutely NEVER pass turn while already thinking or while AI is speaking!
+    if (this.state !== 'listening' || this.isAiSpeaking) {
+      console.log(`[AudioCall] passTurn ignored: state=${this.state}, isAiSpeaking=${this.isAiSpeaking}`);
       return;
     }
 
     this.turnCompleteReceived = false;
-    this.setAiSpeaking(false);
     this.userHasSpokenInTurn = false;
     this.consecutiveSpeechChunks = 0;
     this.consecutiveSilenceChunks = 0;
@@ -843,7 +852,15 @@ class AudioCallManager {
   }
 
   async manualInterrupt() {
-    console.log('[AudioCall] Manual interrupt requested by user');
+    // Barge-in Grace Period (1.5 seconds):
+    // Prevent accidental taps right when AI starts speaking from wiping out Sarah's response!
+    const elapsed = Date.now() - (this.aiSpeechStartTime || 0);
+    if (this.isAiSpeaking && elapsed < 1500) {
+      console.log(`[AudioCall] Manual interrupt ignored: only ${elapsed}ms into speech (1.5s grace period active)`);
+      return;
+    }
+
+    console.log('[AudioCall] Manual interrupt confirmed by user');
     this.stopWaitingChimeHeartbeat();
     this.flushAudioQueue();
     await this.setState('listening');
