@@ -9,11 +9,17 @@ type LiveClientMessage struct {
 }
 
 type LiveSetup struct {
-	Model               string                   `json:"model"`
-	GenerationConfig    *LiveGenerationConfig    `json:"generationConfig,omitempty"`
-	SystemInstruction   *LiveContent             `json:"systemInstruction,omitempty"`
-	Tools               []LiveTool               `json:"tools,omitempty"`
-	RealtimeInputConfig *LiveRealtimeInputConfig `json:"realtimeInputConfig,omitempty"`
+	Model                    string                        `json:"model"`
+	GenerationConfig         *LiveGenerationConfig         `json:"generationConfig,omitempty"`
+	SystemInstruction        *LiveContent                  `json:"systemInstruction,omitempty"`
+	Tools                    []LiveTool                    `json:"tools,omitempty"`
+	RealtimeInputConfig      *LiveRealtimeInputConfig      `json:"realtimeInputConfig,omitempty"`
+	InputAudioTranscription  *LiveAudioTranscriptionConfig `json:"inputAudioTranscription,omitempty"`
+	OutputAudioTranscription *LiveAudioTranscriptionConfig `json:"outputAudioTranscription,omitempty"`
+}
+
+type LiveAudioTranscriptionConfig struct {
+	LanguageCodes []string `json:"languageCodes,omitempty"`
 }
 
 type LiveRealtimeInputConfig struct {
@@ -21,7 +27,11 @@ type LiveRealtimeInputConfig struct {
 }
 
 type LiveAutomaticActivityDetection struct {
-	Disabled bool `json:"disabled"`
+	Disabled                 bool   `json:"disabled"`
+	StartOfSpeechSensitivity string `json:"startOfSpeechSensitivity,omitempty"`
+	EndOfSpeechSensitivity   string `json:"endOfSpeechSensitivity,omitempty"`
+	PrefixPaddingMs          int    `json:"prefixPaddingMs,omitempty"`
+	SilenceDurationMs        int    `json:"silenceDurationMs,omitempty"`
 }
 
 type LiveGenerationConfig struct {
@@ -98,9 +108,17 @@ type LiveServerMessage struct {
 }
 
 type LiveServerContent struct {
-	ModelTurn    *LiveContent `json:"modelTurn,omitempty"`
-	TurnComplete bool         `json:"turnComplete,omitempty"`
-	Interrupted  bool         `json:"interrupted,omitempty"`
+	ModelTurn                 *LiveContent       `json:"modelTurn,omitempty"`
+	TurnComplete              bool               `json:"turnComplete,omitempty"`
+	Interrupted               bool               `json:"interrupted,omitempty"`
+	InputTranscription        *LiveTranscription `json:"inputTranscription,omitempty"`
+	InterimInputTranscription *LiveTranscription `json:"interimInputTranscription,omitempty"`
+}
+
+type LiveTranscription struct {
+	Text         string `json:"text,omitempty"`
+	Finished     bool   `json:"finished,omitempty"`
+	LanguageCode string `json:"languageCode,omitempty"`
 }
 
 type LiveToolCall struct {

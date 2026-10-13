@@ -368,7 +368,7 @@ class AudioCallManager {
         this.onAudioActivity(rms);
       }
 
-      // Natural Conversational Pause Turn Handover (Auto-VAD)
+      // Extended Patience Turn Handover (Auto-VAD with 8-second hesitation tolerance)
       if (rms > 0.018) {
         this.consecutiveSpeechChunks++;
         this.consecutiveSilenceChunks = 0;
@@ -379,10 +379,10 @@ class AudioCallManager {
         this.consecutiveSpeechChunks = 0;
         this.consecutiveSilenceChunks++;
 
-        // If the student has spoken their sentence/question, and then naturally pauses for 2.2s (22 chunks):
-        // Automatically hand over the turn smoothly!
-        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 22) {
-          console.log('[AudioCall] 🎙️ Natural conversational pause detected (2.2s silence after speech) -> Auto-passing turn to partner!');
+        // Extended silence patience: 8.0 seconds (80 chunks of 100ms silence after speech).
+        // This guarantees Sarah NEVER cuts in while the student is thinking, hesitating, or formulating a sentence!
+        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 80) {
+          console.log('[AudioCall] 🎙️ Extended conversational silence detected (8.0s silence after speech) -> Gracefully passing turn to partner!');
           this.userHasSpokenInTurn = false;
           this.consecutiveSilenceChunks = 0;
           this.passTurn();
@@ -459,6 +459,24 @@ class AudioCallManager {
         console.log('[AudioCall] 🏁 turn_complete received from server');
         this.turnCompleteReceived = true;
         this.checkIfAiSpeechFinished();
+        break;
+
+      case 'turn_passed':
+        console.log('[AudioCall] 🎯 turn_passed received from server (voice trigger or explicit pass)');
+        this.sentAudioChunkCount = 0;
+        this.userHasSpokenInTurn = false;
+        this.consecutiveSpeechChunks = 0;
+        this.consecutiveSilenceChunks = 0;
+        this.setState('thinking');
+        this.startWaitingChimeHeartbeat();
+        if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
+        this.thinkingTimer = setTimeout(() => {
+          if (this.state === 'thinking') {
+            console.warn('[AudioCall] Response timeout - switching back to listening');
+            this.stopWaitingChimeHeartbeat();
+            this.setState('listening');
+          }
+        }, 15000);
         break;
 
       case 'topic_saved':

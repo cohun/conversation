@@ -510,14 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.16-natural-pause-vad-fix"
+	const AppVersion = "2.4.17-server-voice-trigger-and-extended-patience"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
 			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker Car-Tuned 2.3x + Broadcast Compressor / Desktop Clean 1.15x)",
-			"activity_control": "Gemini Multimodal Live Manual Activity (ActivityStart / MediaChunks / ActivityEnd)",
+			"activity_control": "Gemini Multimodal Live Voice Trigger (InputAudioTranscription) + 8s Patience Auto-VAD",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})

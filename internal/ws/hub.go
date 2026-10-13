@@ -305,9 +305,10 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 	)
 
 	// Add Hands-Free Spoken Interaction Instruction
-	systemText += "\n\n[Hands-Free Spoken Interaction]\n" +
-		"The student may be driving or practicing hands-free. The student concludes their turn either by saying 'Your turn!' (or 'Over to you!') or by tapping the app button.\n" +
-		"When you receive the turn, respond promptly and naturally in your companion role without delay. Do not cut in while the student is speaking."
+	systemText += "\n\n[Hands-Free Spoken Interaction & Turn-Taking]\n" +
+		"The student is practicing English while driving or hands-free. They may take long pauses (several seconds) to think, hesitate, or formulate sentences. NEVER interrupt them mid-thought!\n" +
+		"The student concludes their turn by saying 'Your turn!' (or 'Over to you!', 'What do you think?').\n" +
+		"When you receive the turn, respond promptly, warmly, and concisely without delay."
 
 	// Add Resume Context if applicable
 	if resume != nil {
@@ -355,9 +356,13 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 			},
 			RealtimeInputConfig: &gemini.LiveRealtimeInputConfig{
 				AutomaticActivityDetection: &gemini.LiveAutomaticActivityDetection{
-					Disabled: true,
+					Disabled: true, // Google VAD disabled: Gemini never cuts in when the student pauses or hesitates!
 				},
 			},
+			InputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{
+				LanguageCodes: []string{"en"},
+			},
+			OutputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{},
 			SystemInstruction: &gemini.LiveContent{
 				Parts: []gemini.LivePart{
 					{Text: systemText},
