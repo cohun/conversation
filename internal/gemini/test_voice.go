@@ -126,28 +126,44 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 		}
 	}
 
-	// 3. Stream 10 chunks (1 second) of 16kHz PCM audio via RealtimeInput.MediaChunks burst
-	for i := 0; i < 10; i++ {
-		pcm := generateSinePCM(440.0, 100)
-		b64 := base64.StdEncoding.EncodeToString(pcm)
-		audioMsg := LiveClientMessage{
-			RealtimeInput: &LiveRealtimeInput{
-				MediaChunks: []LiveBlob{
-					{
-						MimeType: "audio/pcm;rate=16000",
-						Data:     b64,
+	// 3. Send 1 second of 16kHz WAV audio + text prompt via ClientContent (matching RollingLiveSession.sendBufferedAudioTurn)
+	pcm := generateSinePCM(440.0, 1000)
+	dataLen := uint32(len(pcm))
+	wav := make([]byte, 44+dataLen)
+	copy(wav[0:4], "RIFF")
+	wav[4], wav[5], wav[6], wav[7] = byte(36+dataLen), byte((36+dataLen)>>8), byte((36+dataLen)>>16), byte((36+dataLen)>>24)
+	copy(wav[8:12], "WAVE")
+	copy(wav[12:16], "fmt ")
+	wav[16] = 16
+	wav[20] = 1
+	wav[22] = 1
+	wav[24], wav[25] = byte(16000&0xFF), byte((16000>>8)&0xFF)
+	wav[28], wav[29] = byte(32000&0xFF), byte((32000>>8)&0xFF)
+	wav[32] = 2
+	wav[34] = 16
+	copy(wav[36:40], "data")
+	wav[40], wav[41], wav[42], wav[43] = byte(dataLen), byte(dataLen>>8), byte(dataLen>>16), byte(dataLen>>24)
+	copy(wav[44:], pcm)
+
+	b64Wav := base64.StdEncoding.EncodeToString(wav)
+	passMsg := LiveClientMessage{
+		ClientContent: &LiveClientContent{
+			Turns: []LiveContent{
+				{
+					Role: "user",
+					Parts: []LivePart{
+						{
+							InlineData: &LiveBlob{
+								MimeType: "audio/wav",
+								Data:     b64Wav,
+							},
+						},
+						{
+							Text: "Please respond naturally to what I just said in the attached audio.",
+						},
 					},
 				},
 			},
-		}
-		if err := conn.WriteJSON(audioMsg); err != nil {
-			return nil, fmt.Errorf("writing audio chunk %d failed: %w", i, err)
-		}
-	}
-
-	// 4. Commit buffered audio turn via ClientContent{TurnComplete: true}
-	passMsg := LiveClientMessage{
-		ClientContent: &LiveClientContent{
 			TurnComplete: true,
 		},
 	}

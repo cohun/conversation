@@ -510,14 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.21-live-burst-turn-and-trigger"
+	const AppVersion = "2.4.22-wav-turn-and-pause-safe-trigger"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
 			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker Car-Tuned 2.3x + Broadcast Compressor / Desktop Clean 1.15x)",
-			"activity_control": "Server-Side Speech Compaction + Normalized RealtimeInput Burst + Live Voice Trigger Detector",
+			"activity_control": "Server-Side Speech Compaction + Normalized WAV ClientContent Turn + Pause-Safe Live Trigger",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})

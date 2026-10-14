@@ -435,8 +435,8 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 }
 
 // DetectVoiceTriggerLive uses a short-lived helper BidiGenerateContent WebSocket session
-// to transcribe a 3.5s tail PCM clip and detect turn-handover phrases ("Your turn!", "Over to you!", etc.)
-// without disturbing the main Sarah conversation WebSocket during student pauses.
+// to transcribe a tail PCM clip via ClientContent (audio/wav) and detect turn-handover phrases
+// ("Your turn!", "Over to you!", etc.) without disturbing the main Sarah conversation WebSocket.
 func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, normPCM []byte) (bool, string, error) {
 	if len(normPCM) < 3200 || apiKey == "" {
 		return false, "", nil
@@ -445,8 +445,10 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 		model = "models/gemini-3.8-live"
 	}
 
-	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	checkCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
+
+	wavBytes := encodePCM16ToWAV(normPCM, 16000)
 
 	liveURL := fmt.Sprintf(
 		"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=%s",
@@ -457,11 +459,21 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 	conn, _, err := dialer.DialContext(checkCtx, liveURL, nil)
 	if err != nil {
 		// Fallback to REST transcription if WebSocket dial fails
-		wavBytes := encodePCM16ToWAV(normPCM, 16000)
 		text, restErr := h.TranscribeAudioClip(checkCtx, apiKey, wavBytes)
-		return false, text, restErr
+		return MatchesVoiceTriggerText(text), text, restErr
 	}
 	defer conn.Close()
+
+	// Ensure conn closes immediately if checkCtx is cancelled (e.g. student resumed speaking)
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	go func() {
+		select {
+		case <-checkCtx.Done():
+			_ = conn.Close()
+		case <-doneCh:
+		}
+	}()
 
 	setupMsg := gemini.LiveClientMessage{
 		Setup: &gemini.LiveSetup{
@@ -476,33 +488,14 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 					},
 				},
 			},
-			InputAudioTranscription:  &gemini.LiveAudioTranscriptionConfig{},
 			OutputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{},
 			SystemInstruction: &gemini.LiveContent{
 				Parts: []gemini.LivePart{
 					{
-						Text: "You are a verbatim speech-to-text transcriber and turn-handover detector. " +
-							"Repeat ONLY the exact English words spoken by the user in the audio clip word-for-word, with zero extra commentary. " +
-							"If the user explicitly speaks a turn-handover phrase ('your turn', 'over to you', 'go ahead', or 'what do you think'), call the trigger_turn_handover tool immediately.",
-					},
-				},
-			},
-			Tools: []gemini.LiveTool{
-				{
-					FunctionDeclarations: []gemini.LiveFunctionDeclaration{
-						{
-							Name:        "trigger_turn_handover",
-							Description: "Call immediately when the user speaks 'your turn', 'over to you', 'go ahead', or 'what do you think'.",
-							Parameters: map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"phrase": map[string]interface{}{
-										"type":        "string",
-										"description": "The exact handover phrase spoken by the user",
-									},
-								},
-							},
-						},
+						Text: "You are a strict speech-to-text transcriber. " +
+							"Repeat ONLY the exact English words spoken in the user's audio clip verbatim. " +
+							"Do not answer questions, do not converse, and do not add any words, greetings, or commentary. " +
+							"If there is no clear English speech, say nothing.",
 					},
 				},
 			},
@@ -519,67 +512,42 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 		return false, "", fmt.Errorf("trigger detector setup failed: %v", err)
 	}
 
-	// Stream the normalized tail PCM in 100ms (3200-byte) chunks
-	const chunkSize = 3200
-	for offset := 0; offset < len(normPCM); offset += chunkSize {
-		end := offset + chunkSize
-		if end > len(normPCM) {
-			end = len(normPCM)
-		}
-		b64 := base64.StdEncoding.EncodeToString(normPCM[offset:end])
-		chunkMsg := gemini.LiveClientMessage{
-			RealtimeInput: &gemini.LiveRealtimeInput{
-				MediaChunks: []gemini.LiveBlob{
-					{
-						MimeType: "audio/pcm;rate=16000",
-						Data:     b64,
+	b64Wav := base64.StdEncoding.EncodeToString(wavBytes)
+	turnMsg := gemini.LiveClientMessage{
+		ClientContent: &gemini.LiveClientContent{
+			Turns: []gemini.LiveContent{
+				{
+					Role: "user",
+					Parts: []gemini.LivePart{
+						{
+							InlineData: &gemini.LiveBlob{
+								MimeType: "audio/wav",
+								Data:     b64Wav,
+							},
+						},
+						{
+							Text: "Transcribe the spoken words in this audio clip verbatim. Output ONLY the exact words spoken.",
+						},
 					},
 				},
 			},
-		}
-		if err := conn.WriteJSON(chunkMsg); err != nil {
-			return false, "", err
-		}
-	}
-
-	commitMsg := gemini.LiveClientMessage{
-		ClientContent: &gemini.LiveClientContent{
 			TurnComplete: true,
 		},
 	}
-	if err := conn.WriteJSON(commitMsg); err != nil {
+	if err := conn.WriteJSON(turnMsg); err != nil {
 		return false, "", err
 	}
 
-	var inputTranscript strings.Builder
 	var outputTranscript strings.Builder
-	deadline := time.Now().Add(4500 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(2500 * time.Millisecond))
+		_ = conn.SetReadDeadline(time.Now().Add(3500 * time.Millisecond))
 		var msg gemini.LiveServerMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			break
 		}
 
-		if msg.ToolCall != nil {
-			for _, fc := range msg.ToolCall.FunctionCalls {
-				if fc.Name == "trigger_turn_handover" {
-					phrase, _ := fc.Args["phrase"].(string)
-					if phrase == "" {
-						phrase = "your turn"
-					}
-					combined := strings.TrimSpace(inputTranscript.String() + " " + outputTranscript.String() + " " + phrase)
-					return true, combined, nil
-				}
-			}
-		}
-
 		if msg.ServerContent != nil {
-			if msg.ServerContent.InputTranscription != nil && msg.ServerContent.InputTranscription.Text != "" {
-				inputTranscript.WriteString(msg.ServerContent.InputTranscription.Text)
-			} else if msg.ServerContent.InterimInputTranscription != nil && msg.ServerContent.InterimInputTranscription.Text != "" {
-				inputTranscript.WriteString(msg.ServerContent.InterimInputTranscription.Text)
-			}
 			if msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Text != "" {
 				outputTranscript.WriteString(msg.ServerContent.OutputTranscription.Text)
 			}
@@ -591,12 +559,8 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 				}
 			}
 
-			// Early exit as soon as either input or output transcription contains a voice trigger
-			inStr := strings.TrimSpace(inputTranscript.String())
+			// Early exit as soon as the verbatim transcription contains a voice trigger
 			outStr := strings.TrimSpace(outputTranscript.String())
-			if MatchesVoiceTriggerText(inStr) {
-				return true, inStr, nil
-			}
 			if MatchesVoiceTriggerText(outStr) {
 				return true, outStr, nil
 			}
@@ -607,10 +571,7 @@ func (h *Hub) DetectVoiceTriggerLive(ctx context.Context, apiKey, model string, 
 		}
 	}
 
-	finalText := strings.TrimSpace(inputTranscript.String())
-	if finalText == "" {
-		finalText = strings.TrimSpace(outputTranscript.String())
-	}
+	finalText := strings.TrimSpace(outputTranscript.String())
 	return MatchesVoiceTriggerText(finalText), finalText, nil
 }
 
