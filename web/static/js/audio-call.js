@@ -182,7 +182,7 @@ class AudioCallManager {
       // 2. Pre-load AudioWorklet module
       if (this.audioCtx.audioWorklet) {
         try {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.20');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.21');
           this.workletModuleLoaded = true;
         } catch (e) {
           this.workletModuleLoaded = false;

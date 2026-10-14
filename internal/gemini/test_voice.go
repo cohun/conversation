@@ -59,6 +59,8 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 					},
 				},
 			},
+			InputAudioTranscription:  &LiveAudioTranscriptionConfig{},
+			OutputAudioTranscription: &LiveAudioTranscriptionConfig{},
 			SystemInstruction: &LiveContent{
 				Parts: []LivePart{
 					{Text: "You are Sarah, an encouraging English teacher. Briefly respond to test audio input."},
@@ -96,6 +98,7 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 	}
 
 	greetingChunks := 0
+	var greetingTranscript string
 	greetingStart := time.Now()
 	for {
 		if time.Since(greetingStart) > 10*time.Second {
@@ -107,6 +110,9 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 			return nil, fmt.Errorf("reading greeting failed: %w", err)
 		}
 		if msg.ServerContent != nil {
+			if msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Text != "" {
+				greetingTranscript += msg.ServerContent.OutputTranscription.Text
+			}
 			if msg.ServerContent.ModelTurn != nil {
 				for _, p := range msg.ServerContent.ModelTurn.Parts {
 					if p.InlineData != nil {
@@ -120,34 +126,39 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 		}
 	}
 
-	// 3. Send 1 second of 16kHz PCM audio via ClientContent inlineData turn (production architecture)
-	pcm := generateSinePCM(440.0, 1000)
-	b64 := base64.StdEncoding.EncodeToString(pcm)
-	passMsg := LiveClientMessage{
-		ClientContent: &LiveClientContent{
-			Turns: []LiveContent{
-				{
-					Role: "user",
-					Parts: []LivePart{
-						{
-							InlineData: &LiveBlob{
-								MimeType: "audio/pcm;rate=16000",
-								Data:     b64,
-							},
-						},
+	// 3. Stream 10 chunks (1 second) of 16kHz PCM audio via RealtimeInput.MediaChunks burst
+	for i := 0; i < 10; i++ {
+		pcm := generateSinePCM(440.0, 100)
+		b64 := base64.StdEncoding.EncodeToString(pcm)
+		audioMsg := LiveClientMessage{
+			RealtimeInput: &LiveRealtimeInput{
+				MediaChunks: []LiveBlob{
+					{
+						MimeType: "audio/pcm;rate=16000",
+						Data:     b64,
 					},
 				},
 			},
+		}
+		if err := conn.WriteJSON(audioMsg); err != nil {
+			return nil, fmt.Errorf("writing audio chunk %d failed: %w", i, err)
+		}
+	}
+
+	// 4. Commit buffered audio turn via ClientContent{TurnComplete: true}
+	passMsg := LiveClientMessage{
+		ClientContent: &LiveClientContent{
 			TurnComplete: true,
 		},
 	}
 	turnStartTime := time.Now()
 	if err := conn.WriteJSON(passMsg); err != nil {
-		return nil, fmt.Errorf("write audio turn failed: %w", err)
+		return nil, fmt.Errorf("write pass_turn failed: %w", err)
 	}
 
 	// 5. Receive response audio chunks
 	responseChunks := 0
+	var responseTranscript string
 	for {
 		if time.Since(turnStartTime) > 12*time.Second {
 			return nil, errors.New("timeout waiting for audio response from Gemini")
@@ -158,6 +169,9 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 			return nil, fmt.Errorf("reading response audio failed: %w", err)
 		}
 		if msg.ServerContent != nil {
+			if msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Text != "" {
+				responseTranscript += msg.ServerContent.OutputTranscription.Text
+			}
 			if msg.ServerContent.ModelTurn != nil {
 				for _, p := range msg.ServerContent.ModelTurn.Parts {
 					if p.InlineData != nil {
@@ -176,8 +190,10 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 		"model":                 model,
 		"setup_acknowledged":    true,
 		"greeting_audio_chunks": greetingChunks,
+		"greeting_transcript":   greetingTranscript,
 		"user_audio_chunks":     10,
 		"response_audio_chunks": responseChunks,
+		"response_transcript":   responseTranscript,
 		"roundtrip_latency_ms":  time.Since(turnStartTime).Milliseconds(),
 		"timestamp":             time.Now().Format(time.RFC3339),
 		"message":               "✅ Gemini Live audio test passed successfully!",

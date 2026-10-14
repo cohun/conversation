@@ -511,7 +511,7 @@ func (s *RollingLiveSession) Run() {
 				rawChunk, decErr := base64.StdEncoding.DecodeString(clientMsg.Data)
 				if decErr == nil && len(rawChunk) > 0 {
 					rms := computePCM16RMS(rawChunk)
-					var wavToTranscribe []byte
+					var tailToCheck []byte
 
 					s.activityMu.Lock()
 					canStream := !s.isAiSpeaking && !s.isProcessingTurn
@@ -572,8 +572,7 @@ func (s *RollingLiveSession) Run() {
 								}
 								tailPCM := make([]byte, len(s.userAudioBytes)-startIdx)
 								copy(tailPCM, s.userAudioBytes[startIdx:])
-								normTail := normalizePCM16(tailPCM)
-								wavToTranscribe = encodePCM16ToWAV(normTail, 16000)
+								tailToCheck = normalizePCM16(tailPCM)
 								s.speechChunksInPhrase = 0
 								s.phrasePeakRMS = 0
 							}
@@ -587,8 +586,8 @@ func (s *RollingLiveSession) Run() {
 					}
 					s.activityMu.Unlock()
 
-					if len(wavToTranscribe) > 0 {
-						go s.checkVoiceTriggerInTail(ctx, wavToTranscribe)
+					if len(tailToCheck) > 0 {
+						go s.checkVoiceTriggerInTail(ctx, tailToCheck)
 					}
 				}
 			}
@@ -618,7 +617,8 @@ func (s *RollingLiveSession) Run() {
 	}
 }
 
-func (s *RollingLiveSession) matchesVoiceTrigger(text string) bool {
+// MatchesVoiceTriggerText checks whether a transcript contains a turn-handover phrase
+func MatchesVoiceTriggerText(text string) bool {
 	clean := strings.ToLower(text)
 	var b strings.Builder
 	for _, r := range clean {
@@ -668,7 +668,11 @@ func (s *RollingLiveSession) matchesVoiceTrigger(text string) bool {
 	return false
 }
 
-func (s *RollingLiveSession) checkVoiceTriggerInTail(ctx context.Context, wavBytes []byte) {
+func (s *RollingLiveSession) matchesVoiceTrigger(text string) bool {
+	return MatchesVoiceTriggerText(text)
+}
+
+func (s *RollingLiveSession) checkVoiceTriggerInTail(ctx context.Context, normTailPCM []byte) {
 	s.activityMu.Lock()
 	busy := s.isProcessingTurn || s.isAiSpeaking
 	s.activityMu.Unlock()
@@ -676,14 +680,14 @@ func (s *RollingLiveSession) checkVoiceTriggerInTail(ctx context.Context, wavByt
 		return
 	}
 
-	transcript, err := s.hub.TranscribeAudioClip(ctx, s.apiKey, wavBytes)
-	if err != nil || transcript == "" {
+	triggered, transcript, err := s.hub.DetectVoiceTriggerLive(ctx, s.apiKey, s.model, normTailPCM)
+	if err != nil && transcript == "" && !triggered {
 		return
 	}
 
 	s.activityMu.Lock()
 	stillListening := !s.isProcessingTurn && !s.isAiSpeaking
-	if stillListening {
+	if stillListening && transcript != "" {
 		s.userTurnTranscripts = append(s.userTurnTranscripts, transcript)
 	}
 	s.activityMu.Unlock()
@@ -692,16 +696,49 @@ func (s *RollingLiveSession) checkVoiceTriggerInTail(ctx context.Context, wavByt
 		return
 	}
 
-	log.Printf("[RollingSession] 🗣️ Phrase transcribed: %q", transcript)
-	_ = s.clientWS.WriteJSON(ClientOutMessage{
-		Type: "user_transcript",
-		Text: transcript,
-	})
+	if transcript != "" {
+		log.Printf("[RollingSession] 🗣️ Phrase transcribed: %q (triggered=%v)", transcript, triggered)
+		_ = s.clientWS.WriteJSON(ClientOutMessage{
+			Type: "user_transcript",
+			Text: transcript,
+		})
+	}
 
-	if s.matchesVoiceTrigger(transcript) {
+	if triggered || s.matchesVoiceTrigger(transcript) {
 		log.Printf("[RollingSession] 🎯 Voice trigger detected in phrase (%q)! Ending user turn immediately...", transcript)
 		s.endUserTurn(ctx, fmt.Sprintf("voice trigger (%q)", transcript))
 	}
+}
+
+func (s *RollingLiveSession) sendBufferedAudioTurn(normPCM []byte) error {
+	const chunkSize = 3200 // 100ms of 16kHz 16-bit mono PCM
+	for offset := 0; offset < len(normPCM); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(normPCM) {
+			end = len(normPCM)
+		}
+		b64Chunk := base64.StdEncoding.EncodeToString(normPCM[offset:end])
+		chunkMsg := gemini.LiveClientMessage{
+			RealtimeInput: &gemini.LiveRealtimeInput{
+				MediaChunks: []gemini.LiveBlob{
+					{
+						MimeType: "audio/pcm;rate=16000",
+						Data:     b64Chunk,
+					},
+				},
+			},
+		}
+		if err := s.sendToActiveGemini(chunkMsg); err != nil {
+			return err
+		}
+	}
+
+	commitMsg := gemini.LiveClientMessage{
+		ClientContent: &gemini.LiveClientContent{
+			TurnComplete: true,
+		},
+	}
+	return s.sendToActiveGemini(commitMsg)
 }
 
 func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
@@ -743,41 +780,23 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 		s.recordTurn(s.profile.DisplayName, transcripts)
 	}
 
-	var endMsg gemini.LiveClientMessage
+	var normPCM []byte
+	var fallbackMsg gemini.LiveClientMessage
 	if chunksCount > 0 && len(rawPCM) > 0 {
-		normPCM := normalizePCM16(rawPCM)
-		b64Audio := base64.StdEncoding.EncodeToString(normPCM)
+		normPCM = normalizePCM16(rawPCM)
 		durationSec := float64(len(normPCM)) / 32000.0
-		log.Printf("[RollingSession] 🎯 %s -> Sending %.1fs normalized audio (%d chunks, %d bytes) to Gemini via ClientContent...",
+		log.Printf("[RollingSession] 🎯 %s -> Streaming %.1fs normalized audio (%d chunks, %d bytes) to Gemini via RealtimeInput burst + TurnComplete...",
 			source, durationSec, chunksCount, len(normPCM))
 
-		endMsg = gemini.LiveClientMessage{
-			ClientContent: &gemini.LiveClientContent{
-				Turns: []gemini.LiveContent{
-					{
-						Role: "user",
-						Parts: []gemini.LivePart{
-							{
-								InlineData: &gemini.LiveBlob{
-									MimeType: "audio/pcm;rate=16000",
-									Data:     b64Audio,
-								},
-							},
-						},
-					},
-				},
-				TurnComplete: true,
-			},
-		}
-		if err := s.sendToActiveGemini(endMsg); err != nil {
+		if err := s.sendBufferedAudioTurn(normPCM); err != nil {
 			log.Printf("[RollingSession] Error sending audio turn to Gemini: %v. Attempting immediate reconnect...", err)
 			if rErr := s.doRollover(ctx); rErr == nil {
-				_ = s.sendToActiveGemini(endMsg)
+				_ = s.sendBufferedAudioTurn(normPCM)
 			}
 		}
 	} else {
 		log.Printf("[RollingSession] ℹ️ Zero audio chunks on %s. Sending gentle prompt to Gemini...", source)
-		endMsg = gemini.LiveClientMessage{
+		fallbackMsg = gemini.LiveClientMessage{
 			ClientContent: &gemini.LiveClientContent{
 				Turns: []gemini.LiveContent{
 					{
@@ -790,7 +809,7 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 				TurnComplete: true,
 			},
 		}
-		_ = s.sendToActiveGemini(endMsg)
+		_ = s.sendToActiveGemini(fallbackMsg)
 	}
 
 	// Always notify client that turn was passed so UI updates and chime plays
@@ -799,7 +818,7 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 	})
 
 	// Turn watchdog: If Gemini does not respond after 12s, refresh connection cleanly
-	go func(sentTime time.Time, retryMsg gemini.LiveClientMessage) {
+	go func(sentTime time.Time, audioToRetry []byte, msgToRetry gemini.LiveClientMessage) {
 		time.Sleep(12 * time.Second)
 		s.activityMu.Lock()
 		stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
@@ -808,10 +827,14 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 		if stalled {
 			log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s on %s). Refreshing connection...", source)
 			if rErr := s.doRollover(ctx); rErr == nil {
-				_ = s.sendToActiveGemini(retryMsg)
+				if len(audioToRetry) > 0 {
+					_ = s.sendBufferedAudioTurn(audioToRetry)
+				} else {
+					_ = s.sendToActiveGemini(msgToRetry)
+				}
 			}
 		}
-	}(turnStartTime, endMsg)
+	}(turnStartTime, normPCM, fallbackMsg)
 }
 
 // computePCM16RMS computes root-mean-square amplitude of 16-bit little-endian PCM

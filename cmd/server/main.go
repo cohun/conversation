@@ -510,14 +510,14 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.20-patient-listening-and-instant-voice-trigger"
+	const AppVersion = "2.4.21-live-burst-turn-and-trigger"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,
 			"build_time":       time.Now().Format(time.RFC3339),
 			"active_model":     resolver.GetEffectiveModel(effectiveAPIKey),
 			"audio_output":     "CegAgy Architecture (Mobile Loudspeaker Car-Tuned 2.3x + Broadcast Compressor / Desktop Clean 1.15x)",
-			"activity_control": "Gemini Multimodal Live Tuned VAD (5s Silence + PrefixPadding + English ASR) + Protected UI",
+			"activity_control": "Server-Side Speech Compaction + Normalized RealtimeInput Burst + Live Voice Trigger Detector",
 			"downsampler":      "Continuous Phase Linear Interpolation (16kHz)",
 		})
 	})
@@ -547,6 +547,7 @@ func main() {
 		model := resolver.GetEffectiveModel(key)
 		res, err := gemini.TestLiveVoiceConnection(ctx, key, model)
 		if err != nil {
+			log.Printf("[TestVoice] ❌ Live voice test failed on model %s: %v", model, err)
 			jsonResponse(w, http.StatusInternalServerError, map[string]interface{}{
 				"status":  "error",
 				"version": AppVersion,
@@ -554,6 +555,7 @@ func main() {
 			})
 			return
 		}
+		log.Printf("[TestVoice] ✅ Live voice test passed on model %s (%v ms)", model, res["roundtrip_latency_ms"])
 		res["version"] = AppVersion
 		jsonResponse(w, http.StatusOK, res)
 	})
