@@ -120,34 +120,30 @@ func TestLiveVoiceConnection(ctx context.Context, apiKey, model string) (map[str
 		}
 	}
 
-	// 3. Stream 10 chunks (1 second) of 16kHz PCM audio
-	for i := 0; i < 10; i++ {
-		pcm := generateSinePCM(440.0, 100)
-		b64 := base64.StdEncoding.EncodeToString(pcm)
-		audioMsg := LiveClientMessage{
-			RealtimeInput: &LiveRealtimeInput{
-				MediaChunks: []LiveBlob{
-					{
-						MimeType: "audio/pcm;rate=16000",
-						Data:     b64,
+	// 3. Send 1 second of 16kHz PCM audio via ClientContent inlineData turn (production architecture)
+	pcm := generateSinePCM(440.0, 1000)
+	b64 := base64.StdEncoding.EncodeToString(pcm)
+	passMsg := LiveClientMessage{
+		ClientContent: &LiveClientContent{
+			Turns: []LiveContent{
+				{
+					Role: "user",
+					Parts: []LivePart{
+						{
+							InlineData: &LiveBlob{
+								MimeType: "audio/pcm;rate=16000",
+								Data:     b64,
+							},
+						},
 					},
 				},
 			},
-		}
-		if err := conn.WriteJSON(audioMsg); err != nil {
-			return nil, fmt.Errorf("writing audio chunk %d failed: %w", i, err)
-		}
-	}
-
-	// 4. Pass turn
-	passMsg := LiveClientMessage{
-		ClientContent: &LiveClientContent{
 			TurnComplete: true,
 		},
 	}
 	turnStartTime := time.Now()
 	if err := conn.WriteJSON(passMsg); err != nil {
-		return nil, fmt.Errorf("write pass_turn failed: %w", err)
+		return nil, fmt.Errorf("write audio turn failed: %w", err)
 	}
 
 	// 5. Receive response audio chunks

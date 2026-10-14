@@ -23,6 +23,8 @@ class AudioCallManager {
     this.isSpeakerphone = true; // Default to loudspeaker on mobile devices
     this.micStream = null;
     this.micSourceNode = null;
+    this.micPreAmpGain = null;
+    this.micCompressor = null;
     this.workletNode = null;
     this.scriptProcessorNode = null;
     this.silentGainNode = null;
@@ -41,6 +43,7 @@ class AudioCallManager {
     // Mic statistics
     this.sentAudioChunkCount = 0;
     this.lastMicLogTime = 0;
+    this.peakRmsSinceLog = 0.0;
 
     // Timer
     this.startTime = null;
@@ -131,6 +134,18 @@ class AudioCallManager {
       } catch (e) {}
       this.silentGainNode = null;
     }
+    if (this.micCompressor) {
+      try {
+        this.micCompressor.disconnect();
+      } catch (e) {}
+      this.micCompressor = null;
+    }
+    if (this.micPreAmpGain) {
+      try {
+        this.micPreAmpGain.disconnect();
+      } catch (e) {}
+      this.micPreAmpGain = null;
+    }
     if (this.micSourceNode) {
       try {
         this.micSourceNode.disconnect();
@@ -167,7 +182,7 @@ class AudioCallManager {
       // 2. Pre-load AudioWorklet module
       if (this.audioCtx.audioWorklet) {
         try {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.10');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.20');
           this.workletModuleLoaded = true;
         } catch (e) {
           this.workletModuleLoaded = false;
@@ -225,6 +240,22 @@ class AudioCallManager {
     }
   }
 
+  setupMicPreAmpChain(sourceNode) {
+    this.micPreAmpGain = this.audioCtx.createGain();
+    this.micPreAmpGain.gain.setValueAtTime(3.0, this.audioCtx.currentTime);
+
+    this.micCompressor = this.audioCtx.createDynamicsCompressor();
+    this.micCompressor.threshold.setValueAtTime(-12, this.audioCtx.currentTime);
+    this.micCompressor.knee.setValueAtTime(18, this.audioCtx.currentTime);
+    this.micCompressor.ratio.setValueAtTime(4, this.audioCtx.currentTime);
+    this.micCompressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+    this.micCompressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
+
+    sourceNode.connect(this.micPreAmpGain);
+    this.micPreAmpGain.connect(this.micCompressor);
+    return this.micCompressor;
+  }
+
   async initMicrophoneCapture() {
     if (!this.micStream) return;
     let workletInitialized = false;
@@ -233,10 +264,11 @@ class AudioCallManager {
     if (this.audioCtx.audioWorklet) {
       try {
         if (!this.workletModuleLoaded) {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.10');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.20');
           this.workletModuleLoaded = true;
         }
         this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+        const preAmpOut = this.setupMicPreAmpChain(this.micSourceNode);
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-processor');
 
         this.workletNode.port.onmessage = (event) => {
@@ -244,13 +276,13 @@ class AudioCallManager {
           this.handleMicPcmChunk(pcm, rms);
         };
 
-        this.micSourceNode.connect(this.workletNode);
+        preAmpOut.connect(this.workletNode);
         this.silentGainNode = this.audioCtx.createGain();
         this.silentGainNode.gain.value = 0;
         this.workletNode.connect(this.silentGainNode);
         this.silentGainNode.connect(this.audioCtx.destination);
         workletInitialized = true;
-        console.log('[AudioCall] 🎙️ AudioWorklet microphone capture initialized');
+        console.log('[AudioCall] 🎙️ AudioWorklet microphone capture initialized (with 3.0x studio pre-amp)');
       } catch (workletErr) {
         console.warn('[AudioCall] AudioWorklet init failed, using ScriptProcessor fallback:', workletErr);
       }
@@ -267,6 +299,7 @@ class AudioCallManager {
     try {
       const bufferSize = 2048;
       this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+      const preAmpOut = this.setupMicPreAmpChain(this.micSourceNode);
       const scriptNode = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
       const targetSampleRate = 16000;
@@ -326,13 +359,13 @@ class AudioCallManager {
         spPhase -= inputData.length;
       };
 
-      this.micSourceNode.connect(scriptNode);
+      preAmpOut.connect(scriptNode);
       this.silentGainNode = this.audioCtx.createGain();
       this.silentGainNode.gain.value = 0;
       scriptNode.connect(this.silentGainNode);
       this.silentGainNode.connect(this.audioCtx.destination);
       this.scriptProcessorNode = scriptNode;
-      console.log('[AudioCall] 🎙️ ScriptProcessor fallback microphone capture active');
+      console.log('[AudioCall] 🎙️ ScriptProcessor fallback microphone capture active (with 3.0x studio pre-amp)');
     } catch (spErr) {
       console.error('[AudioCall] Failed to initialize ScriptProcessor fallback:', spErr);
     }
@@ -357,10 +390,14 @@ class AudioCallManager {
       }));
 
       this.sentAudioChunkCount++;
+      if (rms > this.peakRmsSinceLog) {
+        this.peakRmsSinceLog = rms;
+      }
       const now = Date.now();
       if (!this.lastMicLogTime || now - this.lastMicLogTime > 2000) {
-        console.log(`[AudioCall] 🎙️ Mic streaming: ${this.sentAudioChunkCount} chunks streamed (RMS: ${rms.toFixed(3)})`);
+        console.log(`[AudioCall] 🎙️ Mic streaming: ${this.sentAudioChunkCount} chunks streamed (RMS: ${rms.toFixed(3)}, Peak: ${this.peakRmsSinceLog.toFixed(3)})`);
         this.lastMicLogTime = now;
+        this.peakRmsSinceLog = 0.0;
       }
 
       // Visual feedback callback for orb pulsation
@@ -368,25 +405,17 @@ class AudioCallManager {
         this.onAudioActivity(rms);
       }
 
-      // Extended Patience Turn Handover (Auto-VAD with 8-second hesitation tolerance)
-      if (rms > 0.018) {
+      // Track speech activity for UI state without cutting the student off during thinking pauses!
+      // Turn handover happens ONLY when the student says "Your turn!" (detected by server) or taps "Átadom a szót".
+      if (rms > 0.010) {
         this.consecutiveSpeechChunks++;
         this.consecutiveSilenceChunks = 0;
-        if (this.consecutiveSpeechChunks >= 4) { // User has spoken for at least 400ms
+        if (this.consecutiveSpeechChunks >= 3) {
           this.userHasSpokenInTurn = true;
         }
-      } else if (rms < 0.009) {
+      } else if (rms < 0.005) {
         this.consecutiveSpeechChunks = 0;
         this.consecutiveSilenceChunks++;
-
-        // Extended silence patience: 5.0 seconds (50 chunks of 100ms silence after speech).
-        // This guarantees Sarah NEVER cuts in while the student is thinking, hesitating, or formulating a sentence!
-        if (this.userHasSpokenInTurn && this.consecutiveSilenceChunks >= 50) {
-          console.log('[AudioCall] 🎙️ Conversational silence detected (5.0s silence after speech) -> Gracefully passing turn to partner!');
-          this.userHasSpokenInTurn = false;
-          this.consecutiveSilenceChunks = 0;
-          this.passTurn();
-        }
       }
     }
   }
@@ -467,8 +496,10 @@ class AudioCallManager {
         this.userHasSpokenInTurn = false;
         this.consecutiveSpeechChunks = 0;
         this.consecutiveSilenceChunks = 0;
+        if (!this.waitingChimeInterval) {
+          this.startWaitingChimeHeartbeat();
+        }
         this.setState('thinking');
-        this.startWaitingChimeHeartbeat();
         if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
         this.thinkingTimer = setTimeout(() => {
           if (this.state === 'thinking') {
@@ -715,8 +746,12 @@ class AudioCallManager {
       this.thinkingTimer = null;
     }
 
+    const wasSpeaking = this.isAiSpeaking;
     this.isAiSpeaking = speaking;
     if (speaking) {
+      if (!wasSpeaking) {
+        console.log('[AudioCall] 🔊 Sarah started speaking...');
+      }
       this.aiSpeechStartTime = Date.now();
       this.stopWaitingChimeHeartbeat();
       this.setState('speaking');

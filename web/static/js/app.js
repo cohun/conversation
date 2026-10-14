@@ -1341,11 +1341,15 @@ If the student asks to save the topic, invoke the 'save_conversation' tool.`;
           const orb = document.getElementById('pulseCoreOrb');
           const tip = document.getElementById('callBargeInTip');
           if (orb && this.currentCall && this.currentCall.state === 'listening') {
-            if (rms > 0.015) {
-              orb.style.boxShadow = '0 0 28px rgba(78, 124, 99, 0.7)';
-              if (tip) tip.textContent = '🎙️ Hallom a hangodat! Befejezéskor mondd: "Your turn!", vagy koppints.';
-            } else {
-              orb.style.boxShadow = '';
+            if (rms > 0.008) {
+              orb.style.boxShadow = '0 0 28px rgba(78, 124, 99, 0.75)';
+              if (tip && !tip.textContent.startsWith('🗣️')) {
+                tip.textContent = '🎙️ Hallom a hangodat! Nyugodtan gondolkodj — a végén mondd: "Your turn!", vagy koppints.';
+              }
+              if (this.voiceGlowTimer) clearTimeout(this.voiceGlowTimer);
+              this.voiceGlowTimer = setTimeout(() => {
+                if (orb) orb.style.boxShadow = '';
+              }, 1500);
             }
           }
         },

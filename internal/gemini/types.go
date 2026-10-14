@@ -113,6 +113,7 @@ type LiveServerContent struct {
 	Interrupted               bool               `json:"interrupted,omitempty"`
 	InputTranscription        *LiveTranscription `json:"inputTranscription,omitempty"`
 	InterimInputTranscription *LiveTranscription `json:"interimInputTranscription,omitempty"`
+	OutputTranscription       *LiveTranscription `json:"outputTranscription,omitempty"`
 }
 
 type LiveTranscription struct {

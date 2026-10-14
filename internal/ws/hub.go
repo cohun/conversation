@@ -2,6 +2,8 @@ package ws
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -49,6 +51,9 @@ type Hub struct {
 	db          *db.DB
 	resolver    *gemini.ModelResolver
 	authHandler *auth.Handler
+	sttModelMu  sync.RWMutex
+	sttModel    string
+	httpClient  *http.Client
 }
 
 func NewHub(cfg *config.Config, database *db.DB, resolver *gemini.ModelResolver, authHandler *auth.Handler) *Hub {
@@ -57,6 +62,9 @@ func NewHub(cfg *config.Config, database *db.DB, resolver *gemini.ModelResolver,
 		db:          database,
 		resolver:    resolver,
 		authHandler: authHandler,
+		httpClient: &http.Client{
+			Timeout: 6 * time.Second,
+		},
 	}
 }
 
@@ -354,18 +362,6 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 					},
 				},
 			},
-			RealtimeInputConfig: &gemini.LiveRealtimeInputConfig{
-				AutomaticActivityDetection: &gemini.LiveAutomaticActivityDetection{
-					Disabled:                 false,
-					PrefixPaddingMs:          500,
-					SilenceDurationMs:        5000,
-					EndOfSpeechSensitivity:   "END_SENSITIVITY_LOW",
-					StartOfSpeechSensitivity: "START_SENSITIVITY_LOW",
-				},
-			},
-			InputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{
-				LanguageCodes: []string{"en-US"},
-			},
 			OutputAudioTranscription: &gemini.LiveAudioTranscriptionConfig{},
 			SystemInstruction: &gemini.LiveContent{
 				Parts: []gemini.LivePart{
@@ -435,6 +431,120 @@ func (h *Hub) connectToGeminiLiveWithContinuation(
 	log.Printf("[Hub] Received setupComplete from Gemini Live for model %s", model)
 
 	return safeWS, nil
+}
+
+// TranscribeAudioClip transcribes a short 16kHz 16-bit mono WAV clip using Gemini Flash REST API
+// for fast (<500ms) server-side detection of the 'Your turn!' voice trigger.
+func (h *Hub) TranscribeAudioClip(ctx context.Context, apiKey string, wavBytes []byte) (string, error) {
+	if len(wavBytes) <= 44 || apiKey == "" {
+		return "", nil
+	}
+
+	b64Wav := base64.StdEncoding.EncodeToString(wavBytes)
+	reqBody := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"role": "user",
+				"parts": []map[string]interface{}{
+					{
+						"inlineData": map[string]interface{}{
+							"mimeType": "audio/wav",
+							"data":     b64Wav,
+						},
+					},
+					{
+						"text": "Transcribe the spoken English words in this audio clip verbatim. Output ONLY the exact spoken words in plain text, or empty string if there is no speech.",
+					},
+				},
+			},
+		},
+		"generationConfig": map[string]interface{}{
+			"temperature":     0.0,
+			"maxOutputTokens": 40,
+		},
+	}
+
+	jsonPayload, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	defaultCandidates := []string{
+		"gemini-3.8-flash",
+		"gemini-flash-latest",
+		"gemini-3.5-flash",
+		"gemini-2.5-flash",
+		"gemini-2.0-flash",
+	}
+
+	h.sttModelMu.RLock()
+	cached := h.sttModel
+	h.sttModelMu.RUnlock()
+
+	var candidates []string
+	if cached != "" {
+		candidates = append(candidates, cached)
+	}
+	for _, m := range defaultCandidates {
+		if m != cached {
+			candidates = append(candidates, m)
+		}
+	}
+
+	client := h.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+
+	for _, modelName := range candidates {
+		reqCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, apiKey)
+		httpReq, reqErr := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(jsonPayload))
+		if reqErr != nil {
+			cancel()
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, doErr := client.Do(httpReq)
+		if doErr != nil {
+			cancel()
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			cancel()
+			continue
+		}
+
+		var result struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+		decErr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		cancel()
+
+		if decErr == nil {
+			if cached != modelName {
+				h.sttModelMu.Lock()
+				h.sttModel = modelName
+				h.sttModelMu.Unlock()
+			}
+			if len(result.Candidates) > 0 && len(result.Candidates[0].Content.Parts) > 0 {
+				return strings.TrimSpace(result.Candidates[0].Content.Parts[0].Text), nil
+			}
+			return "", nil
+		}
+	}
+
+	return "", fmt.Errorf("all flash transcription models failed")
 }
 
 func (h *Hub) handleSaveConversationTool(

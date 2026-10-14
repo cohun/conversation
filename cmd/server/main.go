@@ -510,7 +510,7 @@ func main() {
 	})
 
 	// Version Info Endpoint
-	const AppVersion = "2.4.19-vad-voice-trigger-and-protection"
+	const AppVersion = "2.4.20-patient-listening-and-instant-voice-trigger"
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"version":          AppVersion,

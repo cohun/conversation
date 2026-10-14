@@ -2,9 +2,12 @@ package ws
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -38,14 +41,21 @@ type RollingLiveSession struct {
 	turns     []TurnRecord
 
 	// Activity tracking to perform rollovers during natural conversational pauses
-	activityMu             sync.Mutex
-	isAiSpeaking           bool
-	isStudentSpeaking      bool
-	isProcessingTurn       bool
-	hasStartedTurnActivity bool
-	droppingAudio          bool
-	lastTurnTime           time.Time
-	userAudioChunksInTurn  int
+	activityMu               sync.Mutex
+	isAiSpeaking             bool
+	isStudentSpeaking        bool
+	isProcessingTurn         bool
+	hasStartedTurnActivity   bool
+	droppingAudio            bool
+	lastTurnTime             time.Time
+	userAudioChunksInTurn    int
+	userAudioBytes           []byte
+	rawFallbackBytes         []byte
+	preRollChunks            [][]byte
+	speechChunksInPhrase     int
+	silenceChunksAfterPhrase int
+	phrasePeakRMS            float64
+	userTurnTranscripts      []string
 }
 
 func newRollingLiveSession(
@@ -228,6 +238,13 @@ func (s *RollingLiveSession) handleClientInterrupt() {
 	s.hasStartedTurnActivity = false
 	s.droppingAudio = true
 	s.userAudioChunksInTurn = 0
+	s.userAudioBytes = nil
+	s.rawFallbackBytes = nil
+	s.preRollChunks = nil
+	s.speechChunksInPhrase = 0
+	s.silenceChunksAfterPhrase = 0
+	s.phrasePeakRMS = 0
+	s.userTurnTranscripts = nil
 	s.activityMu.Unlock()
 
 	// 1. Tell browser audio has stopped immediately
@@ -277,7 +294,7 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 
 		// Handle Audio & Turn Content
 		if serverMsg.ServerContent != nil {
-			// Real-time server-side voice trigger detection via Gemini input transcription
+			// Real-time server-side voice trigger detection via Gemini input transcription if present
 			var transcriptText string
 			if serverMsg.ServerContent.InputTranscription != nil && serverMsg.ServerContent.InputTranscription.Text != "" {
 				transcriptText = serverMsg.ServerContent.InputTranscription.Text
@@ -295,6 +312,10 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 					log.Printf("[RollingSession] 🎯 Voice trigger detected in transcript (%q)! Committing turn immediately...", transcriptText)
 					s.endUserTurn(ctx, fmt.Sprintf("voice trigger (%q)", transcriptText))
 				}
+			}
+
+			if serverMsg.ServerContent.OutputTranscription != nil && serverMsg.ServerContent.OutputTranscription.Text != "" {
+				currentModelTurnText.WriteString(serverMsg.ServerContent.OutputTranscription.Text)
 			}
 
 			if serverMsg.ServerContent.Interrupted {
@@ -346,6 +367,13 @@ func (s *RollingLiveSession) readFromGeminiLoop(ctx context.Context, ws *SafeWeb
 				s.hasStartedTurnActivity = false
 				s.droppingAudio = false
 				s.userAudioChunksInTurn = 0
+				s.userAudioBytes = nil
+				s.rawFallbackBytes = nil
+				s.preRollChunks = nil
+				s.speechChunksInPhrase = 0
+				s.silenceChunksAfterPhrase = 0
+				s.phrasePeakRMS = 0
+				s.userTurnTranscripts = nil
 				s.lastTurnTime = time.Now()
 				s.activityMu.Unlock()
 
@@ -480,24 +508,88 @@ func (s *RollingLiveSession) Run() {
 		switch clientMsg.Type {
 		case "audio":
 			if clientMsg.Data != "" {
-				s.activityMu.Lock()
-				canStream := !s.isAiSpeaking && !s.isProcessingTurn
-				if canStream {
-					s.userAudioChunksInTurn++
-				}
-				s.activityMu.Unlock()
+				rawChunk, decErr := base64.StdEncoding.DecodeString(clientMsg.Data)
+				if decErr == nil && len(rawChunk) > 0 {
+					rms := computePCM16RMS(rawChunk)
+					var wavToTranscribe []byte
 
-				if canStream {
-					_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-						RealtimeInput: &gemini.LiveRealtimeInput{
-							MediaChunks: []gemini.LiveBlob{
-								{
-									MimeType: "audio/pcm;rate=16000",
-									Data:     clientMsg.Data,
-								},
-							},
-						},
-					})
+					s.activityMu.Lock()
+					canStream := !s.isAiSpeaking && !s.isProcessingTurn
+					if canStream {
+						// Always maintain a raw 45-second fallback buffer so even ultra-quiet mics are never lost on pass_turn
+						s.rawFallbackBytes = append(s.rawFallbackBytes, rawChunk...)
+						const maxFallbackBytes = 16000 * 2 * 45
+						if len(s.rawFallbackBytes) > maxFallbackBytes {
+							s.rawFallbackBytes = s.rawFallbackBytes[len(s.rawFallbackBytes)-maxFallbackBytes:]
+						}
+
+						// Adaptive speech vs. pause detection:
+						// Works both in quiet rooms and when 3.0x pre-amp elevates ambient noise floor
+						isSpeech := rms > 0.008 && (s.phrasePeakRMS < 0.015 || rms > s.phrasePeakRMS*0.30)
+
+						if isSpeech {
+							if rms > s.phrasePeakRMS {
+								s.phrasePeakRMS = rms
+							}
+							// Active speech chunk: flush any pre-roll chunks first to preserve consonant onsets
+							for _, pr := range s.preRollChunks {
+								s.userAudioBytes = append(s.userAudioBytes, pr...)
+								s.userAudioChunksInTurn++
+							}
+							s.preRollChunks = nil
+
+							s.userAudioBytes = append(s.userAudioBytes, rawChunk...)
+							s.userAudioChunksInTurn++
+							s.speechChunksInPhrase++
+							s.silenceChunksAfterPhrase = 0
+							s.lastTurnTime = time.Now()
+						} else {
+							// Silence or ambient background noise after speech
+							s.silenceChunksAfterPhrase++
+							if s.userAudioChunksInTurn > 0 && s.silenceChunksAfterPhrase <= 15 {
+								// Preserve up to 1.5s of natural trailing pause after speech
+								s.userAudioBytes = append(s.userAudioBytes, rawChunk...)
+								s.userAudioChunksInTurn++
+							} else {
+								// During long thinking pauses (>1.5s), maintain a 500ms (5-chunk) pre-roll buffer
+								cp := make([]byte, len(rawChunk))
+								copy(cp, rawChunk)
+								s.preRollChunks = append(s.preRollChunks, cp)
+								if len(s.preRollChunks) > 5 {
+									s.preRollChunks = s.preRollChunks[len(s.preRollChunks)-5:]
+								}
+							}
+
+							// Fast phrase-end check: 500ms pause after >= 2 speech chunks
+							if s.speechChunksInPhrase >= 2 && s.silenceChunksAfterPhrase == 5 {
+								const tailMaxBytes = 112000 // ~3.5s at 16kHz 16-bit mono
+								startIdx := 0
+								if len(s.userAudioBytes) > tailMaxBytes {
+									startIdx = len(s.userAudioBytes) - tailMaxBytes
+								}
+								if startIdx%2 != 0 {
+									startIdx++
+								}
+								tailPCM := make([]byte, len(s.userAudioBytes)-startIdx)
+								copy(tailPCM, s.userAudioBytes[startIdx:])
+								normTail := normalizePCM16(tailPCM)
+								wavToTranscribe = encodePCM16ToWAV(normTail, 16000)
+								s.speechChunksInPhrase = 0
+								s.phrasePeakRMS = 0
+							}
+						}
+
+						// Safety ceiling on single turn buffer (max 3 minutes: ~5.76MB)
+						const maxTurnBytes = 16000 * 2 * 180
+						if len(s.userAudioBytes) > maxTurnBytes {
+							s.userAudioBytes = s.userAudioBytes[len(s.userAudioBytes)-maxTurnBytes:]
+						}
+					}
+					s.activityMu.Unlock()
+
+					if len(wavToTranscribe) > 0 {
+						go s.checkVoiceTriggerInTail(ctx, wavToTranscribe)
+					}
 				}
 			}
 
@@ -576,6 +668,42 @@ func (s *RollingLiveSession) matchesVoiceTrigger(text string) bool {
 	return false
 }
 
+func (s *RollingLiveSession) checkVoiceTriggerInTail(ctx context.Context, wavBytes []byte) {
+	s.activityMu.Lock()
+	busy := s.isProcessingTurn || s.isAiSpeaking
+	s.activityMu.Unlock()
+	if busy {
+		return
+	}
+
+	transcript, err := s.hub.TranscribeAudioClip(ctx, s.apiKey, wavBytes)
+	if err != nil || transcript == "" {
+		return
+	}
+
+	s.activityMu.Lock()
+	stillListening := !s.isProcessingTurn && !s.isAiSpeaking
+	if stillListening {
+		s.userTurnTranscripts = append(s.userTurnTranscripts, transcript)
+	}
+	s.activityMu.Unlock()
+
+	if !stillListening {
+		return
+	}
+
+	log.Printf("[RollingSession] 🗣️ Phrase transcribed: %q", transcript)
+	_ = s.clientWS.WriteJSON(ClientOutMessage{
+		Type: "user_transcript",
+		Text: transcript,
+	})
+
+	if s.matchesVoiceTrigger(transcript) {
+		log.Printf("[RollingSession] 🎯 Voice trigger detected in phrase (%q)! Ending user turn immediately...", transcript)
+		s.endUserTurn(ctx, fmt.Sprintf("voice trigger (%q)", transcript))
+	}
+}
+
 func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 	s.activityMu.Lock()
 	if s.isProcessingTurn || s.isAiSpeaking {
@@ -584,29 +712,72 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 	}
 	s.isProcessingTurn = true
 	s.droppingAudio = false
+
+	// Fallback to rawFallbackBytes if speech threshold was not reached before manual pass_turn
+	if len(s.userAudioBytes) == 0 && len(s.rawFallbackBytes) > 0 {
+		s.userAudioBytes = s.rawFallbackBytes
+		s.userAudioChunksInTurn = len(s.rawFallbackBytes) / 3200
+		if s.userAudioChunksInTurn == 0 {
+			s.userAudioChunksInTurn = 1
+		}
+	}
+
 	chunksCount := s.userAudioChunksInTurn
-	s.hasStartedTurnActivity = false
+	rawPCM := s.userAudioBytes
+	transcripts := strings.Join(s.userTurnTranscripts, " ")
+
+	s.userAudioBytes = nil
+	s.rawFallbackBytes = nil
+	s.preRollChunks = nil
 	s.userAudioChunksInTurn = 0
+	s.speechChunksInPhrase = 0
+	s.silenceChunksAfterPhrase = 0
+	s.phrasePeakRMS = 0
+	s.userTurnTranscripts = nil
+	s.hasStartedTurnActivity = false
 	turnStartTime := time.Now()
 	s.lastTurnTime = turnStartTime
 	s.activityMu.Unlock()
 
-	if chunksCount > 0 {
-		log.Printf("[RollingSession] 🎯 %s -> Sending TurnComplete to Gemini (%d audio chunks streamed)...", source, chunksCount)
-		endMsg := gemini.LiveClientMessage{
+	if transcripts != "" {
+		s.recordTurn(s.profile.DisplayName, transcripts)
+	}
+
+	var endMsg gemini.LiveClientMessage
+	if chunksCount > 0 && len(rawPCM) > 0 {
+		normPCM := normalizePCM16(rawPCM)
+		b64Audio := base64.StdEncoding.EncodeToString(normPCM)
+		durationSec := float64(len(normPCM)) / 32000.0
+		log.Printf("[RollingSession] 🎯 %s -> Sending %.1fs normalized audio (%d chunks, %d bytes) to Gemini via ClientContent...",
+			source, durationSec, chunksCount, len(normPCM))
+
+		endMsg = gemini.LiveClientMessage{
 			ClientContent: &gemini.LiveClientContent{
+				Turns: []gemini.LiveContent{
+					{
+						Role: "user",
+						Parts: []gemini.LivePart{
+							{
+								InlineData: &gemini.LiveBlob{
+									MimeType: "audio/pcm;rate=16000",
+									Data:     b64Audio,
+								},
+							},
+						},
+					},
+				},
 				TurnComplete: true,
 			},
 		}
 		if err := s.sendToActiveGemini(endMsg); err != nil {
-			log.Printf("[RollingSession] Error sending TurnComplete to Gemini: %v. Attempting immediate reconnect...", err)
+			log.Printf("[RollingSession] Error sending audio turn to Gemini: %v. Attempting immediate reconnect...", err)
 			if rErr := s.doRollover(ctx); rErr == nil {
 				_ = s.sendToActiveGemini(endMsg)
 			}
 		}
 	} else {
 		log.Printf("[RollingSession] ℹ️ Zero audio chunks on %s. Sending gentle prompt to Gemini...", source)
-		passMsg := gemini.LiveClientMessage{
+		endMsg = gemini.LiveClientMessage{
 			ClientContent: &gemini.LiveClientContent{
 				Turns: []gemini.LiveContent{
 					{
@@ -619,7 +790,7 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 				TurnComplete: true,
 			},
 		}
-		_ = s.sendToActiveGemini(passMsg)
+		_ = s.sendToActiveGemini(endMsg)
 	}
 
 	// Always notify client that turn was passed so UI updates and chime plays
@@ -628,7 +799,7 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 	})
 
 	// Turn watchdog: If Gemini does not respond after 12s, refresh connection cleanly
-	go func(sentTime time.Time) {
+	go func(sentTime time.Time, retryMsg gemini.LiveClientMessage) {
 		time.Sleep(12 * time.Second)
 		s.activityMu.Lock()
 		stalled := s.isProcessingTurn && !s.isAiSpeaking && s.lastTurnTime.Equal(sentTime)
@@ -637,20 +808,99 @@ func (s *RollingLiveSession) endUserTurn(ctx context.Context, source string) {
 		if stalled {
 			log.Printf("[RollingSession] ⚠️ Turn response watchdog triggered (no response from Gemini in 12s on %s). Refreshing connection...", source)
 			if rErr := s.doRollover(ctx); rErr == nil {
-				_ = s.sendToActiveGemini(gemini.LiveClientMessage{
-					ClientContent: &gemini.LiveClientContent{
-						Turns: []gemini.LiveContent{
-							{
-								Role: "user",
-								Parts: []gemini.LivePart{
-									{Text: "[Connection refreshed. Please ask an open question to invite the student to speak.]"},
-								},
-							},
-						},
-						TurnComplete: true,
-					},
-				})
+				_ = s.sendToActiveGemini(retryMsg)
 			}
 		}
-	}(turnStartTime)
+	}(turnStartTime, endMsg)
+}
+
+// computePCM16RMS computes root-mean-square amplitude of 16-bit little-endian PCM
+func computePCM16RMS(pcm []byte) float64 {
+	numSamples := len(pcm) / 2
+	if numSamples == 0 {
+		return 0
+	}
+	var sumSquares float64
+	for i := 0; i < numSamples; i++ {
+		sample := int16(uint16(pcm[i*2]) | (uint16(pcm[i*2+1]) << 8))
+		norm := float64(sample) / 32768.0
+		sumSquares += norm * norm
+	}
+	return math.Sqrt(sumSquares / float64(numSamples))
+}
+
+// normalizePCM16 normalizes 16-bit little-endian PCM to peak amplitude 22000 (~67% full scale)
+// with maximum gain 12.0x, ensuring quiet microphones are crystal-clear without distortion.
+func normalizePCM16(pcm []byte) []byte {
+	numSamples := len(pcm) / 2
+	if numSamples == 0 {
+		return pcm
+	}
+
+	var maxAbs int32
+	for i := 0; i < numSamples; i++ {
+		sample := int32(int16(uint16(pcm[i*2]) | (uint16(pcm[i*2+1]) << 8)))
+		if sample < 0 {
+			sample = -sample
+		}
+		if sample > maxAbs {
+			maxAbs = sample
+		}
+	}
+
+	const targetPeak = 22000.0
+	if maxAbs < 120 || maxAbs >= 20000 {
+		out := make([]byte, len(pcm))
+		copy(out, pcm)
+		return out
+	}
+
+	gain := targetPeak / float64(maxAbs)
+	if gain > 12.0 {
+		gain = 12.0
+	}
+
+	out := make([]byte, numSamples*2)
+	for i := 0; i < numSamples; i++ {
+		sample := int16(uint16(pcm[i*2]) | (uint16(pcm[i*2+1]) << 8))
+		scaled := int32(float64(sample) * gain)
+		if scaled > 32767 {
+			scaled = 32767
+		} else if scaled < -32768 {
+			scaled = -32768
+		}
+		u := uint16(int16(scaled))
+		out[i*2] = byte(u & 0xFF)
+		out[i*2+1] = byte((u >> 8) & 0xFF)
+	}
+	return out
+}
+
+// encodePCM16ToWAV wraps raw 16-bit mono PCM into a standard 44-byte RIFF WAV format
+func encodePCM16ToWAV(pcm []byte, sampleRate int) []byte {
+	dataLen := uint32(len(pcm))
+	totalLen := 44 + dataLen
+	wav := make([]byte, totalLen)
+
+	// RIFF chunk
+	copy(wav[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(wav[4:8], 36+dataLen)
+	copy(wav[8:12], "WAVE")
+
+	// fmt subchunk
+	copy(wav[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1)
+	binary.LittleEndian.PutUint16(wav[22:24], 1)
+	binary.LittleEndian.PutUint32(wav[24:28], uint32(sampleRate))
+	binary.LittleEndian.PutUint32(wav[28:32], uint32(sampleRate*2))
+	binary.LittleEndian.PutUint16(wav[32:34], 2)
+	binary.LittleEndian.PutUint16(wav[34:36], 16)
+
+	// data subchunk
+	copy(wav[36:40], "data")
+	binary.LittleEndian.PutUint32(wav[40:44], dataLen)
+	copy(wav[44:], pcm)
+
+	return wav
 }
