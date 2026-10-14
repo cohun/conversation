@@ -74,18 +74,25 @@ class AudioCallManager {
     if (!this.outputGain || !this.audioCtx) return;
 
     const isMobile = this.isMobileDevice();
-    // Mobile Loudspeaker / Car Bluetooth: 2.3x (clean, distortion-free headroom)
+    // Mobile Loudspeaker / Car Bluetooth: 2.8x (clean, distortion-free headroom with compressor)
     // Mobile Earpiece: 1.2x
     // Desktop: 1.15x
-    const targetGain = (isMobile && this.isSpeakerphone) ? 2.3 : (isMobile ? 1.2 : 1.15);
+    const targetGain = (isMobile && this.isSpeakerphone) ? 2.8 : (isMobile ? 1.2 : 1.15);
     this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
-    console.log(`[AudioCall] 🔊 Audio route: CegAgy Chain (Compressor -> Gain ${targetGain}x -> Destination) [${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker (Car-tuned 2.3x)' : 'Mobile Earpiece') : 'Desktop 1.15x'}]`);
+    console.log(`[AudioCall] 🔊 Audio route: CegAgy Chain (Compressor -> Gain ${targetGain}x -> Destination) [${isMobile ? (this.isSpeakerphone ? 'Mobile Loudspeaker (Car-tuned 2.8x)' : 'Mobile Earpiece') : 'Desktop 1.15x'}]`);
   }
 
   toggleSpeakerphone() {
     this.isSpeakerphone = !this.isSpeakerphone;
     this.applyAudioRouting();
+    if (this.isMobileDevice()) {
+      if (this.isSpeakerphone && this.state !== 'listening') {
+        this.stopMicrophoneCapture();
+      } else if (!this.isSpeakerphone && !this.micStream) {
+        this.startMicrophoneCapture();
+      }
+    }
     return this.isSpeakerphone;
   }
 
@@ -182,7 +189,7 @@ class AudioCallManager {
       // 2. Pre-load AudioWorklet module
       if (this.audioCtx.audioWorklet) {
         try {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.22');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.23');
           this.workletModuleLoaded = true;
         } catch (e) {
           this.workletModuleLoaded = false;
@@ -191,8 +198,8 @@ class AudioCallManager {
 
       // 3. Audio Graph Setup: Source -> Compressor -> Gain -> Destination (CegAgy Architecture)
       // Desktop: 1.15x gain (clean, comfortable listening volume for headphones/speakers)
-      // Mobile: 2.3x gain + Dynamics Compressor (tuned for clean car audio & phone loudspeakers without clipping)
-      const targetGain = (isMobile && this.isSpeakerphone) ? 2.3 : (isMobile ? 1.2 : 1.15);
+      // Mobile: 2.8x gain + Dynamics Compressor (tuned for clean car audio & phone loudspeakers without clipping)
+      const targetGain = (isMobile && this.isSpeakerphone) ? 2.8 : (isMobile ? 1.2 : 1.15);
       this.outputGain = this.audioCtx.createGain();
       this.outputGain.gain.setValueAtTime(targetGain, this.audioCtx.currentTime);
 
@@ -226,9 +233,17 @@ class AudioCallManager {
         },
       });
 
-      // Maintain persistent mic stream across all devices (no mid-call hardware teardown)
-      this.micStream = permStream;
-      await this.initMicrophoneCapture();
+      if (isMobile && this.isSpeakerphone) {
+        // Mobile: Immediate Hardware Teardown! Sarah speaks first!
+        // Releasing microphone tracks immediately returns phone to pure media stereo loudspeaker mode!
+        permStream.getTracks().forEach((track) => track.stop());
+        this.micStream = null;
+        console.log('[AudioCall] 🔊 Mobile initial Hardware Teardown: mic released for Sarah greeting');
+      } else {
+        // Desktop (or mobile earpiece mode): Maintain persistent mic stream
+        this.micStream = permStream;
+        await this.initMicrophoneCapture();
+      }
 
       // 5. Connect WebSocket to server proxy
       this.connectWebSocket();
@@ -264,7 +279,7 @@ class AudioCallManager {
     if (this.audioCtx.audioWorklet) {
       try {
         if (!this.workletModuleLoaded) {
-          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.20');
+          await this.audioCtx.audioWorklet.addModule('/js/pcm-processor.js?v=2.4.23');
           this.workletModuleLoaded = true;
         }
         this.micSourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
@@ -760,14 +775,23 @@ class AudioCallManager {
 
   async setState(newState) {
     this.state = newState;
+    const isMobile = this.isMobileDevice();
 
     if (newState === 'listening') {
+      if (isMobile && this.isSpeakerphone) {
+        // Student turn: start microphone capture (with 3.0x studio pre-amp)
+        await this.startMicrophoneCapture();
+      }
       this.userHasSpokenInTurn = false;
       this.consecutiveSpeechChunks = 0;
       this.consecutiveSilenceChunks = 0;
     } else {
       if (newState !== 'thinking') {
         this.stopWaitingChimeHeartbeat();
+      }
+      if (isMobile && this.isSpeakerphone) {
+        // Sarah turn: Hardware Teardown (stops mic so mobile switches cleanly to stereo loudspeaker)
+        this.stopMicrophoneCapture();
       }
     }
 
@@ -861,6 +885,11 @@ class AudioCallManager {
     this.userHasSpokenInTurn = false;
     this.consecutiveSpeechChunks = 0;
     this.consecutiveSilenceChunks = 0;
+
+    // Mobilon: Hardware Teardown azonnal a gomb megnyomásakor / szót átadáskor
+    if (this.isMobileDevice() && this.isSpeakerphone) {
+      this.stopMicrophoneCapture();
+    }
 
     // Play immediate feedback chime and start 5-second waiting heartbeat
     this.startWaitingChimeHeartbeat();
